@@ -132,10 +132,18 @@ body {
   background: #fffefb;
   padding: 12px;
   box-shadow: 0 8px 24px rgba(70, 54, 36, 0.08);
+  user-select: none;
+  cursor: grab;
 }
 
 .canvas-card.selected {
   outline: 2px solid #6f8f85;
+}
+
+.canvas-card.dragging {
+  opacity: 0.92;
+  box-shadow: 0 18px 36px rgba(70, 54, 36, 0.16);
+  cursor: grabbing;
 }
 
 .card-header {
@@ -143,6 +151,22 @@ body {
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 12px;
+}
+
+.card-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.drag-handle {
+  padding: 6px 8px;
+  border: 1px solid #ddd4c7;
+  border-radius: 8px;
+  color: #7a6e62;
+  font-size: 12px;
+  cursor: grab;
 }
 
 .card-title-input,
@@ -164,6 +188,10 @@ body {
 .card-actions {
   display: flex;
   gap: 6px;
+}
+
+.connection-handle {
+  cursor: crosshair;
 }
 
 .card-preview {
@@ -217,15 +245,86 @@ body {
   background: #faf7f2;
 }
 
-.column-item {
+.column-insert-slot {
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(111, 143, 133, 0.12);
+}
+
+.column-item-card {
+  display: grid;
+  gap: 8px;
+}
+
+.column-item-surface {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: 8px;
   border: 1px solid #ded4c6;
   border-radius: 10px;
   background: #fffefb;
   padding: 8px;
 }
 
-.column-item-label {
+.column-item-surface.selected {
+  outline: 2px solid #6f8f85;
+}
+
+.column-item-drag {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 10px;
+  color: #7a6e62;
+  font-size: 12px;
+  cursor: grab;
+}
+
+.column-item-body {
+  display: grid;
+  gap: 8px;
+}
+
+.column-item-meta {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.column-board-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.link-preview {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  border: 1px solid #ddd4c7;
+  border-radius: 10px;
+  overflow: hidden;
+  color: inherit;
+  text-decoration: none;
+  background: #faf7f2;
+}
+
+.link-preview-image {
+  width: 100%;
+  max-height: 150px;
+  object-fit: cover;
+  display: block;
+}
+
+.link-preview-copy {
+  padding: 8px;
+}
+
+.link-preview-title {
   font-weight: 600;
+}
+
+.link-preview-subtitle {
+  color: #7a6e62;
+  font-size: 13px;
 }
 
 .column-item-type {

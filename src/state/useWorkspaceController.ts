@@ -144,7 +144,7 @@ export function useWorkspaceController() {
     }));
   }, []);
 
-  const createCardFromTool = useCallback(async (type: CardType, position: Point, target?: { boardId: string; columnId?: string }) => {
+  const createCardFromTool = useCallback(async (type: CardType, position: Point, target?: { boardId: string; columnId?: string; index?: number }) => {
     const latestState = stateRef.current;
     if (!latestState.workspace || !target?.boardId) {
       return;
@@ -159,7 +159,7 @@ export function useWorkspaceController() {
     }
 
     if (target.columnId) {
-      nextBundle = moveCardToColumn(nextBundle, creation.createdCardId, target.columnId);
+      nextBundle = moveCardToColumn(nextBundle, creation.createdCardId, target.columnId, target.index);
     }
 
     nextBundles[bundle.board.id] = nextBundle;
@@ -293,6 +293,13 @@ export function useWorkspaceController() {
     }));
   }, []);
 
+  const cancelConnection = useCallback(() => {
+    setState((current) => ({
+      ...current,
+      connectFromCardId: null,
+    }));
+  }, []);
+
   const finishConnection = useCallback((boardId: string, toCardId: string) => {
     const latestState = stateRef.current;
     if (!latestState.connectFromCardId) {
@@ -392,6 +399,7 @@ export function useWorkspaceController() {
     updateCardMarkdown,
     moveCardByDrag,
     startConnection,
+    cancelConnection,
     finishConnection,
     openChildBoard,
     goToParentBoard,

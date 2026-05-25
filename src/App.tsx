@@ -63,10 +63,11 @@ export default function App() {
                 boardId: controller.currentBoard!.board.id,
               });
             }}
-            onCreateInColumn={(toolType, columnId) => {
+            onCreateInColumn={(toolType, columnId, index) => {
               void controller.createCardFromTool(toolType, { x: 80, y: 80 }, {
                 boardId: controller.currentBoard!.board.id,
                 columnId,
+                index,
               });
             }}
             onCreateInBoard={(toolType, boardId, position) => {
@@ -93,6 +94,7 @@ export default function App() {
               })
             }
             onStartConnection={controller.startConnection}
+            onCancelConnection={controller.cancelConnection}
             onFinishConnection={(cardId) => controller.finishConnection(controller.currentBoard!.board.id, cardId)}
             onOpenBoard={controller.openChildBoard}
             onViewportChange={(viewport) => controller.setViewport(controller.currentBoard!.board.id, viewport)}
