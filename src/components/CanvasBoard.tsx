@@ -151,15 +151,6 @@ function renderEditableContent(input: {
             )
           }
         />
-        <textarea
-          placeholder="Description"
-          value={card.description}
-          onChange={(event) =>
-            onUpdateCard((currentCard) =>
-              currentCard.type === "link" ? { ...currentCard, description: event.target.value } : currentCard,
-            )
-          }
-        />
         {preview ? (
           <a className="link-preview" href={preview.href} target="_blank" rel="noreferrer">
             {preview.imageUrl ? <img src={preview.imageUrl} alt={preview.title} className="link-preview-image" /> : null}
