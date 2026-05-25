@@ -195,6 +195,7 @@ function renderEditableContent(input: {
 export function CanvasBoard(props: CanvasBoardProps) {
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const canvasInnerRef = useRef<HTMLDivElement | null>(null);
+  const ignoreNextCanvasClickRef = useRef(false);
   const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState<Point | null>(null);
@@ -312,6 +313,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
           })
           .map((card) => card.id);
 
+        ignoreNextCanvasClickRef.current = true;
         props.onClearSelection();
         selectedIds.forEach((cardId, index) => props.onSelectCard(cardId, index > 0));
         setSelectionBox(null);
@@ -380,8 +382,10 @@ export function CanvasBoard(props: CanvasBoardProps) {
 
   const handleCanvasDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
+    event.stopPropagation();
     const droppedFiles = Array.from(event.dataTransfer.files ?? []);
     if (droppedFiles.length > 0) {
+      ignoreNextCanvasClickRef.current = true;
       void props.onDropExternalFiles(droppedFiles, screenToCanvas(event.clientX, event.clientY));
       return;
     }
@@ -393,6 +397,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
 
     const point = screenToCanvas(event.clientX, event.clientY);
     if (payload.kind === "tool") {
+      ignoreNextCanvasClickRef.current = true;
       props.onCanvasCreate(payload.toolType, point);
     }
   };
@@ -405,6 +410,11 @@ export function CanvasBoard(props: CanvasBoardProps) {
         onDragOver={handleCanvasDragOver}
         onDrop={handleCanvasDrop}
         onClick={(event) => {
+          if (ignoreNextCanvasClickRef.current) {
+            ignoreNextCanvasClickRef.current = false;
+            return;
+          }
+
           if (event.target === event.currentTarget || event.target === canvasInnerRef.current) {
             props.onClearSelection();
           }
@@ -458,7 +468,13 @@ export function CanvasBoard(props: CanvasBoardProps) {
           });
         }}
       >
-        <div className="canvas-inner" ref={canvasInnerRef} style={viewportStyle}>
+        <div
+          className="canvas-inner"
+          ref={canvasInnerRef}
+          style={viewportStyle}
+          onDragOver={handleCanvasDragOver}
+          onDrop={handleCanvasDrop}
+        >
           <svg className="edge-layer">
             {edges.map((edge) =>
               edge ? (

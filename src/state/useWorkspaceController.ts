@@ -144,6 +144,20 @@ export function useWorkspaceController() {
     }));
   }, []);
 
+  const persistStateSnapshot = useCallback(async (input: {
+    workspace: AppState["workspace"];
+    boards: Record<string, BoardBundle>;
+  }) => {
+    if (!input.workspace || !vaultRef.current) {
+      return;
+    }
+
+    await vaultRef.current.saveWorkspace(input.workspace);
+    for (const bundle of Object.values(input.boards)) {
+      await vaultRef.current.saveBoardBundle(bundle);
+    }
+  }, []);
+
   const createImageCardFromFile = useCallback(async (input: { boardId: string; file: File; position: Point }) => {
     const latestState = stateRef.current;
     if (!latestState.workspace || !vaultRef.current) {
@@ -230,6 +244,12 @@ export function useWorkspaceController() {
       },
       bundles: nextBundles,
     });
+
+    setState((current) => ({
+      ...current,
+      selectedCardIds: [creation.createdCardId],
+      activeCardId: creation.createdCardId,
+    }));
   }, [createImageCardFromFile, updateWorkspaceAndBoards]);
 
   const selectCard = useCallback((cardId: string, multi: boolean) => {
@@ -345,7 +365,12 @@ export function useWorkspaceController() {
       connectFromCardId: null,
       hasUnsavedChanges: true,
     }));
-  }, []);
+
+    void persistStateSnapshot({
+      workspace: nextWorkspace,
+      boards: nextBoards,
+    }).catch(setError);
+  }, [persistStateSnapshot, setError]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {

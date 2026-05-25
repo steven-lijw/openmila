@@ -67,7 +67,7 @@ body {
 
 .app-main {
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto 1fr;
   min-width: 0;
 }
 
@@ -99,13 +99,6 @@ body {
   overflow: hidden;
 }
 
-.topbar-center-stack {
-  display: grid;
-  gap: 6px;
-  width: min(100%, 640px);
-  min-width: 0;
-}
-
 .breadcrumb-bar {
   display: flex;
   align-items: center;
@@ -115,6 +108,14 @@ body {
   border: 1px solid #ddd4c7;
   border-radius: 999px;
   background: #fffdf8;
+}
+
+.topbar-breadcrumb-row {
+  padding: 8px 16px 10px;
+  border-bottom: 1px solid #e7dfd3;
+  background: rgba(255, 252, 247, 0.92);
+  position: relative;
+  z-index: 29;
 }
 
 .breadcrumb-label {

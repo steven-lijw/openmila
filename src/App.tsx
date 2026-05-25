@@ -44,18 +44,12 @@ export default function App() {
           </div>
 
           <div className="topbar-center">
-            <div className="topbar-center-stack">
-              <div className="breadcrumb-bar">
-                <span className="breadcrumb-label">Navigation</span>
-                <span className="breadcrumb">{boardPath.length > 0 ? boardPath.join(" / ") : "Workspace"}</span>
-              </div>
-              <input
-                className="board-title-input"
-                value={controller.currentBoard?.board.title ?? ""}
-                onChange={(event) => controller.updateCurrentBoardTitle(event.target.value)}
-                placeholder="Board title"
-              />
-            </div>
+            <input
+              className="board-title-input"
+              value={controller.currentBoard?.board.title ?? ""}
+              onChange={(event) => controller.updateCurrentBoardTitle(event.target.value)}
+              placeholder="Board title"
+            />
           </div>
 
           <div className="topbar-right">
@@ -63,6 +57,13 @@ export default function App() {
             <span>{controller.state.isSaving ? "Saving..." : controller.state.hasUnsavedChanges ? "Unsaved" : "Saved"}</span>
           </div>
         </header>
+
+        <div className="topbar-breadcrumb-row">
+          <div className="breadcrumb-bar">
+            <span className="breadcrumb-label">Navigation</span>
+            <span className="breadcrumb">{boardPath.length > 0 ? boardPath.join(" / ") : "Workspace"}</span>
+          </div>
+        </div>
 
         {!controller.state.isReady ? <div className="empty-state">Loading vault...</div> : null}
         {controller.state.error ? <div className="error-banner">{controller.state.error}</div> : null}
