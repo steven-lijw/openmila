@@ -26,7 +26,9 @@ interface CanvasBoardProps {
 
 function readDragPayload(event: DragEvent): DragToolPayload | DragCardPayload | null {
   try {
-    const raw = event.dataTransfer.getData("application/json");
+    const raw =
+      event.dataTransfer.getData("application/json") ||
+      event.dataTransfer.getData("text/plain");
     if (!raw) {
       return null;
     }
@@ -91,6 +93,26 @@ export function CanvasBoard(props: CanvasBoardProps) {
     };
   };
 
+  const handleCanvasDragOver = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const payload = readDragPayload(event);
+    event.dataTransfer.dropEffect = payload?.kind === "tool" ? "copy" : "move";
+  };
+
+  const handleCanvasDrop = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const payload = readDragPayload(event);
+    if (!payload) {
+      return;
+    }
+    const point = getCanvasPoint(event);
+    if (payload.kind === "tool") {
+      props.onCanvasCreate(payload.toolType, point);
+      return;
+    }
+    props.onMoveCard(payload, { position: point });
+  };
+
   return (
     <div
       className="canvas-shell"
@@ -103,23 +125,8 @@ export function CanvasBoard(props: CanvasBoardProps) {
       <div
         className="canvas-board"
         ref={canvasRef}
-        onDragOver={(event) => {
-          event.preventDefault();
-          event.dataTransfer.dropEffect = "move";
-        }}
-        onDrop={(event) => {
-          event.preventDefault();
-          const payload = readDragPayload(event);
-          if (!payload) {
-            return;
-          }
-          const point = getCanvasPoint(event);
-          if (payload.kind === "tool") {
-            props.onCanvasCreate(payload.toolType, point);
-            return;
-          }
-          props.onMoveCard(payload, { position: point });
-        }}
+        onDragOver={handleCanvasDragOver}
+        onDrop={handleCanvasDrop}
         onMouseDown={(event) => {
           if (event.target !== event.currentTarget) {
             return;
@@ -157,7 +164,12 @@ export function CanvasBoard(props: CanvasBoardProps) {
           });
         }}
       >
-        <div className="canvas-inner" style={viewportStyle}>
+        <div
+          className="canvas-inner"
+          style={viewportStyle}
+          onDragOver={handleCanvasDragOver}
+          onDrop={handleCanvasDrop}
+        >
           <svg className="edge-layer">
             {edges.map((edge) =>
               edge ? (
@@ -244,14 +256,16 @@ function CardRenderer(props: CardRendererProps) {
       }}
       draggable
       onDragStart={(event) => {
+        const payload = JSON.stringify({
+          kind: "card",
+          sourceBoardId: boardBundle.board.id,
+          cardId: card.id,
+        });
         event.dataTransfer.setData(
           "application/json",
-          JSON.stringify({
-            kind: "card",
-            sourceBoardId: boardBundle.board.id,
-            cardId: card.id,
-          }),
+          payload,
         );
+        event.dataTransfer.setData("text/plain", payload);
         event.dataTransfer.effectAllowed = "move";
       }}
       onClick={(event) => {
@@ -376,7 +390,8 @@ function CardRenderer(props: CardRendererProps) {
           className="board-dropzone"
           onDragOver={(event) => {
             event.preventDefault();
-            event.dataTransfer.dropEffect = "move";
+            const payload = readDragPayload(event);
+            event.dataTransfer.dropEffect = payload?.kind === "tool" ? "copy" : "move";
           }}
           onDrop={(event) => {
             event.preventDefault();
@@ -401,7 +416,8 @@ function CardRenderer(props: CardRendererProps) {
           className="column-dropzone"
           onDragOver={(event) => {
             event.preventDefault();
-            event.dataTransfer.dropEffect = "move";
+            const payload = readDragPayload(event);
+            event.dataTransfer.dropEffect = payload?.kind === "tool" ? "copy" : "move";
           }}
           onDrop={(event) => {
             event.preventDefault();

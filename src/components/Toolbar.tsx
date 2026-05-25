@@ -20,14 +20,13 @@ export function Toolbar() {
             className="tool-card"
             draggable
             onDragStart={(event) => {
-              event.dataTransfer.setData(
-                "application/json",
-                JSON.stringify({
-                  kind: "tool",
-                  toolType: tool.type,
-                }),
-              );
-              event.dataTransfer.effectAllowed = "copy";
+              const payload = JSON.stringify({
+                kind: "tool",
+                toolType: tool.type,
+              });
+              event.dataTransfer.setData("application/json", payload);
+              event.dataTransfer.setData("text/plain", payload);
+              event.dataTransfer.effectAllowed = "copyMove";
             }}
           >
             <div className="tool-name">{tool.title}</div>
