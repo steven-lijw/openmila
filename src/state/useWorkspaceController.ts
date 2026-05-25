@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { addCardToBoard, createCardCreationResult, getBoard, getCard, moveCardToColumn, moveCardToRoot, patchCard, removeCardFromBoard, replaceBoardBundle, setBoardTitle, setCardDocument, updateEdgeList } from "../core/boardOperations";
+import { addCardToBoard, createCardCreationResult, getBoard, getCard, moveCardToRoot, patchCard, removeCardFromBoard, replaceBoardBundle, setBoardTitle, setCardDocument, updateEdgeList } from "../core/boardOperations";
 import { createId } from "../core/ids";
 import { BrowserFsVault } from "../storage/fsVault";
 import type { AppState, BoardBundle, CardMeta, CardType, DragCardPayload, Edge, Point } from "../types";
@@ -144,38 +144,46 @@ export function useWorkspaceController() {
     }));
   }, []);
 
-  const createCardFromTool = useCallback(async (type: CardType, position: Point, target?: { boardId: string; columnId?: string; index?: number }) => {
+  const createImageCardFromFile = useCallback(async (input: { boardId: string; file: File; position: Point }) => {
     const latestState = stateRef.current;
-    if (!latestState.workspace || !target?.boardId) {
+    if (!latestState.workspace || !vaultRef.current) {
       return;
     }
-    const bundle = getBoard(latestState, target.boardId);
-    const creation = createCardCreationResult(latestState.workspace, bundle, type, position);
-    let nextBundle = creation.boardBundle;
-    const nextBundles: Record<string, BoardBundle> = {};
 
-    if (type === "note" || type === "todo") {
-      nextBundle = setCardDocument(nextBundle, creation.createdCardId, createDefaultMarkdown(type));
-    }
-
-    if (target.columnId) {
-      nextBundle = moveCardToColumn(nextBundle, creation.createdCardId, target.columnId, target.index);
-    }
-
-    nextBundles[bundle.board.id] = nextBundle;
-    if (creation.createdBoard) {
-      nextBundles[creation.createdBoard.board.id] = creation.createdBoard;
-    }
+    const bundle = getBoard(latestState, input.boardId);
+    const creation = createCardCreationResult(latestState.workspace, bundle, "image", input.position);
+    const assetPath = await vaultRef.current.importAsset(input.file);
+    const nextBundle = replaceBoardBundle(
+      creation.boardBundle,
+      patchCard(creation.boardBundle.board, creation.createdCardId, (card) =>
+        card.type === "image"
+          ? {
+              ...card,
+              assetPath,
+              title: input.file.name,
+            }
+          : card,
+      ),
+    );
 
     updateWorkspaceAndBoards({
       workspace: {
         ...creation.workspace,
         recentBoardId: latestState.currentBoardId ?? creation.workspace.rootBoardId,
       },
-      bundles: nextBundles,
+      bundles: {
+        [bundle.board.id]: nextBundle,
+      },
     });
+  }, [updateWorkspaceAndBoards]);
 
-    if (type === "image" && vaultRef.current) {
+  const createCardFromTool = useCallback(async (type: CardType, position: Point, target?: { boardId: string }) => {
+    const latestState = stateRef.current;
+    if (!latestState.workspace || !target?.boardId) {
+      return;
+    }
+
+    if (type === "image") {
       try {
         const [fileHandle] = await window.showOpenFilePicker({
           excludeAcceptAllOption: false,
@@ -190,28 +198,39 @@ export function useWorkspaceController() {
           ],
         });
         const file = await fileHandle.getFile();
-        const assetPath = await vaultRef.current.importAsset(file);
-        const freshest = getBoard(stateRef.current, target.boardId);
-        updateBoardBundle(
-          target.boardId,
-          replaceBoardBundle(
-            freshest,
-            patchCard(freshest.board, creation.createdCardId, (card) =>
-              card.type === "image"
-                ? {
-                    ...card,
-                    assetPath,
-                    title: file.name,
-                  }
-                : card,
-            ),
-          ),
-        );
+        await createImageCardFromFile({
+          boardId: target.boardId,
+          file,
+          position,
+        });
       } catch {
-        // If the user cancels image import, the empty image card remains as a placeholder.
+        // User cancelled file selection.
       }
+      return;
     }
-  }, [updateBoardBundle, updateWorkspaceAndBoards]);
+
+    const bundle = getBoard(latestState, target.boardId);
+    const creation = createCardCreationResult(latestState.workspace, bundle, type, position);
+    let nextBundle = creation.boardBundle;
+    const nextBundles: Record<string, BoardBundle> = {};
+
+    if (type === "note" || type === "todo") {
+      nextBundle = setCardDocument(nextBundle, creation.createdCardId, createDefaultMarkdown(type));
+    }
+
+    nextBundles[bundle.board.id] = nextBundle;
+    if (creation.createdBoard) {
+      nextBundles[creation.createdBoard.board.id] = creation.createdBoard;
+    }
+
+    updateWorkspaceAndBoards({
+      workspace: {
+        ...creation.workspace,
+        recentBoardId: latestState.currentBoardId ?? creation.workspace.rootBoardId,
+      },
+      bundles: nextBundles,
+    });
+  }, [createImageCardFromFile, updateWorkspaceAndBoards]);
 
   const selectCard = useCallback((cardId: string, multi: boolean) => {
     setState((current) => {
@@ -247,7 +266,7 @@ export function useWorkspaceController() {
     updateBoardBundle(boardId, setCardDocument(bundle, cardId, markdown));
   }, [updateBoardBundle]);
 
-  const moveCardByDrag = useCallback((payload: DragCardPayload, destination: { boardId: string; position?: Point; columnId?: string; index?: number }) => {
+  const moveCardByDrag = useCallback((payload: DragCardPayload, destination: { boardId: string; position?: Point }) => {
     const latestState = stateRef.current;
     const sourceBundle = getBoard(latestState, payload.sourceBoardId);
     const movingCard = getCard(sourceBundle.board, payload.cardId);
@@ -269,9 +288,7 @@ export function useWorkspaceController() {
       }
     }
 
-    if (destination.columnId) {
-      destinationBundle = moveCardToColumn(destinationBundle, payload.cardId, destination.columnId, destination.index);
-    } else if (destination.position) {
+    if (destination.position) {
       destinationBundle = moveCardToRoot(destinationBundle, payload.cardId, destination.position);
     }
 
@@ -285,6 +302,73 @@ export function useWorkspaceController() {
       hasUnsavedChanges: true,
     }));
   }, []);
+
+  const deleteSelectedCards = useCallback(() => {
+    const latestState = stateRef.current;
+    if (!latestState.currentBoardId || latestState.selectedCardIds.length === 0 || !latestState.workspace) {
+      return;
+    }
+
+    let nextBundle = getBoard(latestState, latestState.currentBoardId);
+    let nextWorkspace = latestState.workspace;
+    const nextBoards = { ...latestState.boards };
+
+    for (const cardId of latestState.selectedCardIds) {
+      const card = nextBundle.board.cards.find((item) => item.id === cardId);
+      if (!card) {
+        continue;
+      }
+
+      if (card.type === "board") {
+        delete nextBoards[card.childBoardId];
+        nextWorkspace = {
+          ...nextWorkspace,
+          boards: nextWorkspace.boards.filter((boardItem) => boardItem.id !== card.childBoardId),
+          recentBoardId:
+            nextWorkspace.recentBoardId === card.childBoardId
+              ? latestState.currentBoardId
+              : nextWorkspace.recentBoardId,
+        };
+      }
+
+      nextBundle = removeCardFromBoard(nextBundle, cardId);
+    }
+
+    nextBoards[latestState.currentBoardId] = nextBundle;
+
+    setState((current) => ({
+      ...current,
+      boards: nextBoards,
+      workspace: nextWorkspace,
+      selectedCardIds: [],
+      activeCardId: null,
+      connectFromCardId: null,
+      hasUnsavedChanges: true,
+    }));
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Delete" && event.key !== "Backspace") {
+        return;
+      }
+
+      const target = event.target;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      if (stateRef.current.selectedCardIds.length === 0) {
+        return;
+      }
+
+      event.preventDefault();
+      deleteSelectedCards();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [deleteSelectedCards]);
 
   const startConnection = useCallback((cardId: string) => {
     setState((current) => ({
@@ -388,6 +472,29 @@ export function useWorkspaceController() {
     return vaultRef.current.readAssetUrl(assetPath);
   }, []);
 
+  const importImageFiles = useCallback(async (input: {
+    boardId: string;
+    files: File[];
+    startPosition: Point;
+  }) => {
+    let offsetIndex = 0;
+    for (const file of input.files) {
+      if (!file.type.startsWith("image/")) {
+        continue;
+      }
+
+      await createImageCardFromFile({
+        boardId: input.boardId,
+        file,
+        position: {
+          x: input.startPosition.x + offsetIndex * 24,
+          y: input.startPosition.y + offsetIndex * 24,
+        },
+      });
+      offsetIndex += 1;
+    }
+  }, [createImageCardFromFile]);
+
   return {
     state,
     currentBoard,
@@ -398,6 +505,7 @@ export function useWorkspaceController() {
     updateCard,
     updateCardMarkdown,
     moveCardByDrag,
+    deleteSelectedCards,
     startConnection,
     cancelConnection,
     finishConnection,
@@ -406,5 +514,6 @@ export function useWorkspaceController() {
     updateCurrentBoardTitle,
     setViewport,
     readAssetUrl,
+    importImageFiles,
   };
 }

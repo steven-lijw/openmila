@@ -4,6 +4,25 @@ import { useWorkspaceController } from "./state/useWorkspaceController";
 
 export default function App() {
   const controller = useWorkspaceController();
+  const boardPath = (() => {
+    if (!controller.currentBoard || !controller.state.workspace) {
+      return [];
+    }
+
+    const path: string[] = [];
+    let boardId: string | null = controller.currentBoard.board.id;
+
+    while (boardId) {
+      const boardItem = controller.state.workspace.boards.find((item) => item.id === boardId);
+      if (!boardItem) {
+        break;
+      }
+      path.unshift(boardItem.title);
+      boardId = boardItem.parentBoardId;
+    }
+
+    return path;
+  })();
 
   return (
     <div className="app-shell">
@@ -25,12 +44,18 @@ export default function App() {
           </div>
 
           <div className="topbar-center">
-            <input
-              className="board-title-input"
-              value={controller.currentBoard?.board.title ?? ""}
-              onChange={(event) => controller.updateCurrentBoardTitle(event.target.value)}
-              placeholder="Board title"
-            />
+            <div className="topbar-center-stack">
+              <div className="breadcrumb-bar">
+                <span className="breadcrumb-label">Navigation</span>
+                <span className="breadcrumb">{boardPath.length > 0 ? boardPath.join(" / ") : "Workspace"}</span>
+              </div>
+              <input
+                className="board-title-input"
+                value={controller.currentBoard?.board.title ?? ""}
+                onChange={(event) => controller.updateCurrentBoardTitle(event.target.value)}
+                placeholder="Board title"
+              />
+            </div>
           </div>
 
           <div className="topbar-right">
@@ -63,29 +88,11 @@ export default function App() {
                 boardId: controller.currentBoard!.board.id,
               });
             }}
-            onCreateInColumn={(toolType, columnId, index) => {
-              void controller.createCardFromTool(toolType, { x: 80, y: 80 }, {
-                boardId: controller.currentBoard!.board.id,
-                columnId,
-                index,
-              });
-            }}
-            onCreateInBoard={(toolType, boardId, position) => {
-              void controller.createCardFromTool(toolType, position, {
-                boardId,
-              });
-            }}
             onSelectCard={controller.selectCard}
             onClearSelection={controller.clearSelection}
             onUpdateCard={(cardId, updater) => controller.updateCard(controller.currentBoard!.board.id, cardId, updater)}
             onUpdateMarkdown={(cardId, markdown) =>
               controller.updateCardMarkdown(controller.currentBoard!.board.id, cardId, markdown)
-            }
-            onMoveCard={(payload, destination) =>
-              controller.moveCardByDrag(payload, {
-                boardId: controller.currentBoard!.board.id,
-                ...destination,
-              })
             }
             onMoveToBoard={(payload, boardId, position) =>
               controller.moveCardByDrag(payload, {
@@ -98,6 +105,13 @@ export default function App() {
             onFinishConnection={(cardId) => controller.finishConnection(controller.currentBoard!.board.id, cardId)}
             onOpenBoard={controller.openChildBoard}
             onViewportChange={(viewport) => controller.setViewport(controller.currentBoard!.board.id, viewport)}
+            onDropExternalFiles={(files, position) =>
+              controller.importImageFiles({
+                boardId: controller.currentBoard!.board.id,
+                files,
+                startPosition: position,
+              })
+            }
           />
         ) : null}
       </main>
