@@ -107,7 +107,7 @@ export default function App() {
             onOpenBoard={controller.openChildBoard}
             onViewportChange={(viewport) => controller.setViewport(controller.currentBoard!.board.id, viewport)}
             onDropExternalFiles={(files, position) =>
-              controller.importImageFiles({
+              controller.importExternalFiles({
                 boardId: controller.currentBoard!.board.id,
                 files,
                 startPosition: position,

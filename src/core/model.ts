@@ -7,6 +7,7 @@ import type {
   CardMeta,
   CardType,
   ColumnCard,
+  FileCard,
   ImageCard,
   LinkCard,
   NoteCard,
@@ -19,6 +20,7 @@ const DEFAULT_CARD_SIZE = {
   todo: { width: 260, height: 180 },
   link: { width: 280, height: 150 },
   image: { width: 280, height: 220 },
+  file: { width: 320, height: 260 },
   column: { width: 300, height: 360 },
   board: { width: 280, height: 180 },
 } as const;
@@ -97,7 +99,6 @@ export function createCardMeta(type: CardType, position: Point): CardMeta {
       position,
       size,
       url: "",
-      description: "",
     };
     return card;
   }
@@ -111,6 +112,22 @@ export function createCardMeta(type: CardType, position: Point): CardMeta {
       position,
       size,
       assetPath: "",
+    };
+    return card;
+  }
+
+  if (type === "file") {
+    const card: FileCard = {
+      id: createId("file"),
+      type: "file",
+      title: "New file",
+      parentId: null,
+      position,
+      size,
+      assetPath: "",
+      mimeType: "",
+      extension: "",
+      sizeBytes: 0,
     };
     return card;
   }

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, MouseEvent } from "react";
+import { formatFileSize, getFilePreviewMeta } from "../core/filePreview";
 import { getLinkPreview } from "../core/linkPreview";
 import { parseTodoMarkdown, stringifyTodoMarkdown } from "../core/todoMarkdown";
 import type { BoardBundle, CardMeta, DragCardPayload, DragToolPayload, Point } from "../types";
@@ -27,7 +28,7 @@ interface CanvasBoardProps {
 interface CardRendererProps {
   boardBundle: BoardBundle;
   card: CardMeta;
-  imageUrls: Record<string, string>;
+  assetUrls: Record<string, string>;
   selectedCardIds: string[];
   activeCardId: string | null;
   connectFromCardId: string | null;
@@ -91,12 +92,12 @@ function pointsEqual(a: Point | undefined, b: Point | undefined) {
 function renderEditableContent(input: {
   card: CardMeta;
   markdown: string;
-  imageUrl?: string;
+  assetUrl?: string;
   isEditable: boolean;
   onUpdateCard: (updater: (card: CardMeta) => CardMeta) => void;
   onUpdateMarkdown: (markdown: string) => void;
 }) {
-  const { card, markdown, imageUrl, isEditable, onUpdateCard, onUpdateMarkdown } = input;
+  const { card, markdown, assetUrl, isEditable, onUpdateCard, onUpdateMarkdown } = input;
 
   if (card.type === "note") {
     return isEditable ? (
@@ -167,10 +168,51 @@ function renderEditableContent(input: {
   if (card.type === "image") {
     return (
       <div className="image-card-body">
-        {card.assetPath && imageUrl ? (
-          <img src={imageUrl} alt={card.title} className="image-preview" />
+        {card.assetPath && assetUrl ? (
+          <img src={assetUrl} alt={card.title} className="image-preview" />
         ) : (
           <div className="image-placeholder">Drop or create with a file to show the image here.</div>
+        )}
+      </div>
+    );
+  }
+
+  if (card.type === "file") {
+    const preview = getFilePreviewMeta({ fileName: card.title, mimeType: card.mimeType });
+
+    return (
+      <div className="file-card-body">
+        <div className="file-meta-row">
+          <span className="file-type-badge">{preview.label}</span>
+          <span className="file-size-text">{formatFileSize(card.sizeBytes)}</span>
+        </div>
+
+        {card.assetPath && assetUrl ? (
+          <>
+            {preview.kind === "pdf" ? <iframe src={assetUrl} title={card.title} className="file-preview-frame" /> : null}
+            {preview.kind === "media" && card.mimeType.startsWith("video/") ? (
+              <video src={assetUrl} controls className="file-preview-media" />
+            ) : null}
+            {preview.kind === "media" && card.mimeType.startsWith("audio/") ? (
+              <audio src={assetUrl} controls className="file-preview-audio" />
+            ) : null}
+            {preview.kind !== "pdf" && preview.kind !== "media" && preview.canRenderInline ? (
+              <iframe src={assetUrl} title={card.title} className="file-preview-frame" />
+            ) : null}
+            {preview.kind !== "pdf" && preview.kind !== "media" ? (
+              <div className="file-preview-fallback">
+                <div className="file-preview-title">{card.title}</div>
+                <div className="file-preview-copy">
+                  Some formats depend on browser-native preview support. If this area looks empty, open the original file.
+                </div>
+              </div>
+            ) : null}
+            <a className="file-open-link" href={assetUrl} target="_blank" rel="noreferrer">
+              Open file
+            </a>
+          </>
+        ) : (
+          <div className="image-placeholder">Choose a file to show it here.</div>
         )}
       </div>
     );
@@ -187,7 +229,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const canvasInnerRef = useRef<HTMLDivElement | null>(null);
   const ignoreNextCanvasClickRef = useRef(false);
-  const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
+  const [assetUrls, setAssetUrls] = useState<Record<string, string>>({});
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState<Point | null>(null);
   const [draggingCard, setDraggingCard] = useState<DraggingCardState | null>(null);
@@ -197,14 +239,14 @@ export function CanvasBoard(props: CanvasBoardProps) {
 
   useEffect(() => {
     for (const card of props.boardBundle.board.cards) {
-      if (card.type !== "image" || !card.assetPath || imageUrls[card.id]) {
+      if ((card.type !== "image" && card.type !== "file") || !card.assetPath || assetUrls[card.id]) {
         continue;
       }
       void props.readAssetUrl(card.assetPath).then((url) => {
-        setImageUrls((current) => ({ ...current, [card.id]: url }));
+        setAssetUrls((current) => ({ ...current, [card.id]: url }));
       });
     }
-  }, [props.boardBundle.board.cards, imageUrls, props.readAssetUrl]);
+  }, [assetUrls, props.boardBundle.board.cards, props.readAssetUrl]);
 
   const rootCards = useMemo(
     () => props.boardBundle.board.cards.filter((card) => card.parentId === null),
@@ -504,7 +546,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
                 key={card.id}
                 boardBundle={props.boardBundle}
                 card={card}
-                imageUrls={imageUrls}
+                assetUrls={assetUrls}
                 selectedCardIds={props.selectedCardIds}
                 activeCardId={props.activeCardId}
                 connectFromCardId={props.connectFromCardId}
@@ -628,7 +670,7 @@ function CardRenderer(props: CardRendererProps) {
       {renderEditableContent({
         card,
         markdown,
-        imageUrl: props.imageUrls[card.id],
+        assetUrl: props.assetUrls[card.id],
         isEditable,
         onUpdateCard: (updater) => props.onUpdateCard(card.id, updater),
         onUpdateMarkdown: (nextMarkdown) => props.onUpdateMarkdown(card.id, nextMarkdown),

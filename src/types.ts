@@ -1,4 +1,4 @@
-export type CardType = "note" | "todo" | "link" | "image" | "column" | "board";
+export type CardType = "note" | "todo" | "link" | "image" | "file" | "column" | "board";
 
 export interface Point {
   x: number;
@@ -48,7 +48,6 @@ export interface LinkCard extends CardBase {
   position: Point;
   size: Size;
   url: string;
-  description: string;
 }
 
 export interface ImageCard extends CardBase {
@@ -56,6 +55,16 @@ export interface ImageCard extends CardBase {
   position: Point;
   size: Size;
   assetPath: string;
+}
+
+export interface FileCard extends CardBase {
+  type: "file";
+  position: Point;
+  size: Size;
+  assetPath: string;
+  mimeType: string;
+  extension: string;
+  sizeBytes: number;
 }
 
 export interface ColumnCard extends CardBase {
@@ -72,7 +81,7 @@ export interface BoardCard extends CardBase {
   childBoardId: string;
 }
 
-export type CardMeta = NoteCard | LinkCard | ImageCard | ColumnCard | BoardCard;
+export type CardMeta = NoteCard | LinkCard | ImageCard | FileCard | ColumnCard | BoardCard;
 
 export interface Edge {
   id: string;

@@ -5,6 +5,7 @@ const TOOLS: ToolDefinition[] = [
   { type: "todo", title: "To-do", subtitle: "Checklist card" },
   { type: "link", title: "Link", subtitle: "URL with local metadata" },
   { type: "image", title: "Image", subtitle: "Import local image file" },
+  { type: "file", title: "File", subtitle: "Upload PDF, Word, PPT and more" },
   { type: "board", title: "Board", subtitle: "Nested canvas board" },
 ];
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getFileExtension } from "../core/filePreview";
 import { addCardToBoard, createCardCreationResult, getBoard, getCard, moveCardToRoot, patchCard, removeCardFromBoard, replaceBoardBundle, setBoardTitle, setCardDocument, updateEdgeList } from "../core/boardOperations";
 import { createId } from "../core/ids";
 import { BrowserFsVault } from "../storage/fsVault";
@@ -158,14 +159,19 @@ export function useWorkspaceController() {
     }
   }, []);
 
-  const createImageCardFromFile = useCallback(async (input: { boardId: string; file: File; position: Point }) => {
+  const createAssetCardFromFile = useCallback(async (input: {
+    boardId: string;
+    file: File;
+    position: Point;
+    type: "image" | "file";
+  }) => {
     const latestState = stateRef.current;
     if (!latestState.workspace || !vaultRef.current) {
       return;
     }
 
     const bundle = getBoard(latestState, input.boardId);
-    const creation = createCardCreationResult(latestState.workspace, bundle, "image", input.position);
+    const creation = createCardCreationResult(latestState.workspace, bundle, input.type, input.position);
     const assetPath = await vaultRef.current.importAsset(input.file);
     const nextBundle = replaceBoardBundle(
       creation.boardBundle,
@@ -176,6 +182,15 @@ export function useWorkspaceController() {
               assetPath,
               title: input.file.name,
             }
+          : card.type === "file"
+            ? {
+                ...card,
+                assetPath,
+                title: input.file.name,
+                mimeType: input.file.type,
+                extension: getFileExtension(input.file.name),
+                sizeBytes: input.file.size,
+              }
           : card,
       ),
     );
@@ -197,25 +212,47 @@ export function useWorkspaceController() {
       return;
     }
 
-    if (type === "image") {
+    if (type === "image" || type === "file") {
       try {
         const [fileHandle] = await window.showOpenFilePicker({
           excludeAcceptAllOption: false,
           multiple: false,
           types: [
-            {
-              description: "Images",
-              accept: {
-                "image/*": [".png", ".jpg", ".jpeg", ".gif", ".webp"],
-              },
-            },
+            ...(type === "image"
+              ? [
+                  {
+                    description: "Images",
+                    accept: {
+                      "image/*": [".png", ".jpg", ".jpeg", ".gif", ".webp"],
+                    },
+                  },
+                ]
+              : [
+                  {
+                    description: "Documents and files",
+                    accept: {
+                      "application/pdf": [".pdf"],
+                      "application/msword": [".doc"],
+                      "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
+                      "application/vnd.ms-powerpoint": [".ppt"],
+                      "application/vnd.openxmlformats-officedocument.presentationml.presentation": [".pptx"],
+                      "application/vnd.ms-excel": [".xls"],
+                      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
+                      "application/rtf": [".rtf"],
+                      "video/*": [".mp4", ".webm"],
+                      "audio/*": [".mp3", ".wav", ".ogg"],
+                      "text/plain": [".txt", ".md", ".csv", ".json", ".html"],
+                    },
+                  },
+                ]),
           ],
         });
         const file = await fileHandle.getFile();
-        await createImageCardFromFile({
+        await createAssetCardFromFile({
           boardId: target.boardId,
           file,
           position,
+          type,
         });
       } catch {
         // User cancelled file selection.
@@ -250,7 +287,7 @@ export function useWorkspaceController() {
       selectedCardIds: [creation.createdCardId],
       activeCardId: creation.createdCardId,
     }));
-  }, [createImageCardFromFile, updateWorkspaceAndBoards]);
+  }, [createAssetCardFromFile, updateWorkspaceAndBoards]);
 
   const selectCard = useCallback((cardId: string, multi: boolean) => {
     setState((current) => {
@@ -497,28 +534,26 @@ export function useWorkspaceController() {
     return vaultRef.current.readAssetUrl(assetPath);
   }, []);
 
-  const importImageFiles = useCallback(async (input: {
+  const importExternalFiles = useCallback(async (input: {
     boardId: string;
     files: File[];
     startPosition: Point;
   }) => {
     let offsetIndex = 0;
     for (const file of input.files) {
-      if (!file.type.startsWith("image/")) {
-        continue;
-      }
-
-      await createImageCardFromFile({
+      const nextType = file.type.startsWith("image/") ? "image" : "file";
+      await createAssetCardFromFile({
         boardId: input.boardId,
         file,
         position: {
           x: input.startPosition.x + offsetIndex * 24,
           y: input.startPosition.y + offsetIndex * 24,
         },
+        type: nextType,
       });
       offsetIndex += 1;
     }
-  }, [createImageCardFromFile]);
+  }, [createAssetCardFromFile]);
 
   return {
     state,
@@ -539,6 +574,6 @@ export function useWorkspaceController() {
     updateCurrentBoardTitle,
     setViewport,
     readAssetUrl,
-    importImageFiles,
+    importExternalFiles,
   };
 }
