@@ -1194,10 +1194,6 @@ export function CanvasBoard(props: CanvasBoardProps) {
                       ? props.selectedCardIds.filter((selectedId) => rootCardMap[selectedId])
                       : [cardMeta.id];
 
-                  if (!shouldKeepSelection || props.selectedCardIds.length <= 1) {
-                    props.onSelectCard(cardMeta.id, event.shiftKey);
-                  }
-
                   props.onBringCardsToFront(movableIds);
 
                   setDraggingCard({
