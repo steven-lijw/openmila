@@ -178,24 +178,28 @@ function renderEditableContent(input: {
 
         {card.assetPath && assetUrl ? (
           <>
-            {preview.kind === "pdf" ? <iframe src={assetUrl} title={card.title} className="file-preview-frame" /> : null}
-            {preview.kind === "media" && card.mimeType.startsWith("video/") ? (
-              <video src={assetUrl} controls className="file-preview-media" />
-            ) : null}
-            {preview.kind === "media" && card.mimeType.startsWith("audio/") ? (
-              <audio src={assetUrl} controls className="file-preview-audio" />
-            ) : null}
-            {preview.kind !== "pdf" && preview.kind !== "media" && preview.canRenderInline ? (
-              <iframe src={assetUrl} title={card.title} className="file-preview-frame" />
-            ) : null}
-            {preview.kind !== "pdf" && preview.kind !== "media" ? (
-              <div className="file-preview-fallback">
-                <div className="file-preview-title">{card.title}</div>
-                <div className="file-preview-copy">
-                  Some formats depend on browser-native preview support. If this area looks empty, open the original file.
+            <div className="file-preview-area">
+              {preview.kind === "pdf" ? (
+                <iframe src={assetUrl} title={card.title} className="file-preview-frame" />
+              ) : null}
+              {preview.kind === "media" && card.mimeType.startsWith("video/") ? (
+                <video src={assetUrl} controls className="file-preview-media" />
+              ) : null}
+              {preview.kind === "media" && card.mimeType.startsWith("audio/") ? (
+                <audio src={assetUrl} controls className="file-preview-audio" />
+              ) : null}
+              {preview.kind !== "pdf" && preview.kind !== "media" && preview.canRenderInline ? (
+                <iframe src={assetUrl} title={card.title} className="file-preview-frame" />
+              ) : null}
+              {preview.kind !== "pdf" && preview.kind !== "media" ? (
+                <div className="file-preview-fallback">
+                  <div className="file-preview-title">{card.title}</div>
+                  <div className="file-preview-copy">
+                    Some formats depend on browser-native preview support. If this area looks empty, open the original file.
+                  </div>
                 </div>
-              </div>
-            ) : null}
+              ) : null}
+            </div>
             <a className="file-open-link" href={assetUrl} target="_blank" rel="noreferrer">
               Open file
             </a>
@@ -667,7 +671,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
   return (
     <div className="canvas-shell">
       <div
-        className={`canvas-board ${draggingCard ? "is-dragging" : ""}`}
+        className={`canvas-board ${draggingCard ? "is-dragging" : ""} ${resizingCard ? "is-resizing" : ""}`}
         ref={canvasRef}
         onDragOver={handleCanvasDragOver}
         onDrop={handleCanvasDrop}

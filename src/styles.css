@@ -478,9 +478,20 @@ button {
 }
 
 .file-card-body {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
   min-height: 190px;
+  flex: 1;
+  min-height: 0;
+}
+
+.file-preview-area {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-height: 140px;
 }
 
 .file-meta-row {
@@ -516,13 +527,24 @@ button {
 .file-preview-frame,
 .file-preview-media {
   width: 100%;
-  height: 190px;
+  height: 100%;
+  min-height: 0;
   border: 1px solid var(--color-border);
   border-radius: 0;
   background: #fff;
 }
 
+.file-preview-frame,
+.file-preview-media,
+.file-preview-fallback {
+  flex: 1;
+}
+
 .canvas-board.is-dragging .file-preview-frame {
+  visibility: hidden;
+}
+
+.canvas-board.is-resizing .file-preview-frame {
   visibility: hidden;
 }
 
