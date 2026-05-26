@@ -15,6 +15,19 @@ import type {
   WorkspaceFile,
 } from "../types";
 
+export const CARD_COLORS = [
+  { key: "default", label: "Default", bg: "#fff" },
+  { key: "red", label: "Red", bg: "#fce8e6" },
+  { key: "yellow", label: "Yellow", bg: "#fef7e0" },
+  { key: "green", label: "Green", bg: "#e6f4ea" },
+  { key: "blue", label: "Blue", bg: "#e8f0fe" },
+  { key: "purple", label: "Purple", bg: "#f3e8fd" },
+  { key: "orange", label: "Orange", bg: "#fee6d3" },
+  { key: "teal", label: "Teal", bg: "#e0f2f1" },
+] as const;
+
+export type CardColorKey = (typeof CARD_COLORS)[number]["key"];
+
 const DEFAULT_CARD_SIZE = {
   note: { width: 304, height: 64 },
   todo: { width: 304, height: 64 },

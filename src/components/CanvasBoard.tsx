@@ -4,6 +4,7 @@ import { formatFileSize, getFilePreviewMeta } from "../core/filePreview";
 import { createId } from "../core/ids";
 import { getLinkPreview } from "../core/linkPreview";
 import { parseTodoMarkdown, stringifyTodoMarkdown } from "../core/todoMarkdown";
+import { CARD_COLORS } from "../core/model";
 import type { BoardBundle, CardMeta, DragCardPayload, DragToolPayload, Point } from "../types";
 
 interface CanvasBoardProps {
@@ -38,6 +39,7 @@ interface CardRendererProps {
   connectFromCardId: string | null;
   displayPosition: Point;
   displaySize: { width: number; height: number };
+  isDragging: boolean;
   onSelectCard: (cardId: string, multi: boolean) => void;
   onUpdateCard: (cardId: string, updater: (card: CardMeta) => CardMeta) => void;
   onUpdateMarkdown: (cardId: string, markdown: string) => void;
@@ -287,6 +289,7 @@ function NoteEditor(props: {
       ref={textareaRef}
       className="card-textarea"
       value={markdown}
+      placeholder="Start writing…"
       onChange={(event) => onUpdateMarkdown(event.target.value)}
     />
   );
@@ -371,6 +374,7 @@ function TodoList(props: {
           <input
             className="todo-text-input"
             value={item.text}
+            placeholder="New task"
             onChange={(event) => {
               const nextItems = items.map((entry) =>
                 entry.id === item.id ? { ...entry, text: event.target.value } : entry,
@@ -449,8 +453,8 @@ export function CanvasBoard(props: CanvasBoardProps) {
   const getEdgeCenter = (card: CardMeta, position: Point) => {
     if (card.type === "board") {
       return {
-        x: position.x + 20,
-        y: position.y + 45,
+        x: position.x + 50,
+        y: position.y + 20,
       };
     }
     const size = getDisplaySize(card);
@@ -758,13 +762,15 @@ export function CanvasBoard(props: CanvasBoardProps) {
             return;
           }
 
-          if (event.target === event.currentTarget || event.target === canvasInnerRef.current) {
+          const target = event.target as HTMLElement;
+          if (!target.closest(".canvas-card") && !target.closest(".edge-layer line")) {
             props.onClearSelection();
             setSelectedEdgeId(null);
           }
         }}
         onMouseDown={(event) => {
-          if (event.target !== event.currentTarget && event.target !== canvasInnerRef.current) {
+          const target = event.target as HTMLElement;
+          if (target.closest(".canvas-card") || target.closest(".edge-layer line")) {
             return;
           }
 
@@ -875,6 +881,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
                 connectFromCardId={props.connectFromCardId}
                 displayPosition={displayPosition}
                 displaySize={displaySize}
+                isDragging={draggingCard?.cardIds.includes(card.id) ?? false}
                 onSelectCard={props.onSelectCard}
                 onUpdateCard={props.onUpdateCard}
                 onUpdateMarkdown={props.onUpdateMarkdown}
@@ -958,11 +965,12 @@ function CardRenderer(props: CardRendererProps) {
 
   return (
     <div
-      className={`canvas-card ${isSelected ? "selected" : ""} ${isBoardCard ? "type-board" : ""}`}
+      className={`canvas-card ${isSelected ? "selected" : ""} ${isBoardCard ? "type-board" : ""} ${props.isDragging ? "dragging" : ""}`}
       style={{
         left: props.displayPosition.x,
         top: props.displayPosition.y,
         ...(isBoardCard ? {} : { width: props.displaySize.width, height: props.displaySize.height }),
+        ...(card.cardColor ? { backgroundColor: card.cardColor } : {}),
       }}
       onDragOver={(event) => {
         if (card.type !== "board") {
@@ -1006,6 +1014,26 @@ function CardRenderer(props: CardRendererProps) {
         }
       }}
     >
+      {isSelected && !isBoardCard ? (
+        <div className="color-bar">
+          {CARD_COLORS.map((colorDef) => (
+            <button
+              key={colorDef.key}
+              type="button"
+              className={`color-swatch ${card.cardColor === colorDef.bg || (!card.cardColor && colorDef.key === "default") ? "active" : ""}`}
+              style={{ backgroundColor: colorDef.bg }}
+              title={colorDef.label}
+              onClick={(e) => {
+                e.stopPropagation();
+                props.onUpdateCard(card.id, (c) => ({
+                  ...c,
+                  cardColor: colorDef.key === "default" ? undefined : colorDef.bg,
+                }));
+              }}
+            />
+          ))}
+        </div>
+      ) : null}
       {!isBoardCard ? (
         <div
           className="connection-dot"

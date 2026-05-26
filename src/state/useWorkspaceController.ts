@@ -21,10 +21,10 @@ const EMPTY_STATE: AppState = {
 
 function createDefaultMarkdown(type: CardType): string {
   if (type === "todo") {
-    return "- [ ] First task";
+    return "- [ ] ";
   }
   if (type === "note") {
-    return "Start writing here.";
+    return "";
   }
   return "";
 }

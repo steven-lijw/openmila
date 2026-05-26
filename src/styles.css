@@ -366,10 +366,10 @@ button {
   user-select: none;
   cursor: grab;
   z-index: 10;
-  overflow: hidden;
   display: flex;
   flex-direction: column;
-  contain: layout paint;
+  overflow: visible;
+  contain: layout style;
 }
 
 .canvas-card.type-board {
@@ -423,9 +423,50 @@ button {
 }
 
 .canvas-card.dragging {
-  opacity: 0.92;
-  box-shadow: var(--shadow-md);
+  opacity: 0.95;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.1);
   cursor: grabbing;
+  transform: scale(1.02);
+  transition: box-shadow 80ms ease, transform 80ms ease;
+}
+
+/* Color bar above cards */
+.color-bar {
+  display: flex;
+  gap: 4px;
+  position: absolute;
+  top: -34px;
+  left: 0;
+  right: 0;
+  height: 28px;
+  padding: 0 6px;
+  align-items: center;
+  justify-content: flex-start;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.color-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1.5px solid rgba(0, 0, 0, 0.12);
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+  pointer-events: auto;
+  transition: transform 100ms ease, border-color 100ms ease;
+}
+
+.color-swatch:hover {
+  transform: scale(1.25);
+  border-color: rgba(0, 0, 0, 0.3);
+}
+
+.color-swatch.active {
+  border-color: #1a1a1a;
+  outline: 1.5px solid #1a1a1a;
+  outline-offset: 1px;
 }
 
 .card-textarea,

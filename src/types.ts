@@ -35,6 +35,7 @@ interface CardBase {
   type: CardType;
   title: string;
   parentId: string | null;
+  cardColor?: string;
 }
 
 export interface NoteCard extends CardBase {
