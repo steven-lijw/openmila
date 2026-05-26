@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, MouseEvent } from "react";
 import { formatFileSize, getFilePreviewMeta } from "../core/filePreview";
 import { createId } from "../core/ids";
@@ -126,11 +126,13 @@ function renderEditableContent(input: {
         onUpdateMarkdown={onUpdateMarkdown}
         onUpdateCard={onUpdateCard}
       />
-    ) : (
+    ) : markdown ? (
       <div
         className="card-preview markdown-body"
-        dangerouslySetInnerHTML={{ __html: markdown ? marked.parse(markdown) : "" }}
+        dangerouslySetInnerHTML={{ __html: marked.parse(markdown) }}
       />
+    ) : (
+      <div className="card-preview card-preview-empty">Start writing…</div>
     );
   }
 
@@ -142,26 +144,11 @@ function renderEditableContent(input: {
   if (card.type === "link") {
     const preview = getLinkPreview(card.url);
     return (
-      <div className="link-fields">
-        <input
-          placeholder="https://example.com"
-          value={card.url}
-          onChange={(event) =>
-            onUpdateCard((currentCard) =>
-              currentCard.type === "link" ? { ...currentCard, url: event.target.value } : currentCard,
-            )
-          }
-        />
-        {preview ? (
-          <a className="link-preview" href={preview.href} target="_blank" rel="noreferrer">
-            {preview.imageUrl ? <img src={preview.imageUrl} alt={preview.title} className="link-preview-image" /> : null}
-            <div className="link-preview-copy">
-              <div className="link-preview-title">{preview.title}</div>
-              <div className="link-preview-subtitle">{preview.subtitle}</div>
-            </div>
-          </a>
-        ) : null}
-      </div>
+      <LinkEditor
+        card={card}
+        preview={preview}
+        onUpdateCard={onUpdateCard}
+      />
     );
   }
 
@@ -266,28 +253,8 @@ function NoteEditor(props: {
   onUpdateMarkdown: (markdown: string) => void;
   onUpdateCard: (updater: (card: CardMeta) => CardMeta) => void;
 }) {
-  const { card, markdown, onUpdateMarkdown, onUpdateCard } = props;
+  const { card, markdown, onUpdateMarkdown } = props;
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-
-  useEffect(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) {
-      return;
-    }
-    const contentHeight = textarea.scrollHeight;
-    const padding = 24;
-    const desiredHeight = Math.ceil(contentHeight + padding);
-    if (desiredHeight <= card.size.height) {
-      return;
-    }
-    onUpdateCard((currentCard) => ({
-      ...currentCard,
-      size: {
-        ...currentCard.size,
-        height: Math.max(currentCard.size.height, desiredHeight),
-      },
-    }));
-  }, [card.size.height, markdown, onUpdateCard]);
 
   return (
     <textarea
@@ -297,6 +264,116 @@ function NoteEditor(props: {
       placeholder="Start writing…"
       onChange={(event) => onUpdateMarkdown(event.target.value)}
     />
+  );
+}
+
+function LinkEditor(props: {
+  card: CardMeta;
+  preview: ReturnType<typeof getLinkPreview>;
+  onUpdateCard: (updater: (card: CardMeta) => CardMeta) => void;
+}) {
+  const { card, preview, onUpdateCard } = props;
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const url = card.type === "link" ? card.url : "";
+  const updateRef = useRef(onUpdateCard);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  updateRef.current = onUpdateCard;
+
+  // Sync input value from props without losing focus during paste
+  useEffect(() => {
+    if (inputRef.current && inputRef.current.value !== url) {
+      inputRef.current.value = url;
+    }
+  }, [url]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+    if (!url) {
+      if (card.size.height > 64) {
+        requestAnimationFrame(() => {
+          updateRef.current((currentCard) => ({
+            ...currentCard,
+            size: { ...currentCard.size, height: 64 },
+          }));
+        });
+      }
+      return;
+    }
+    const contentHeight = container.scrollHeight;
+    const padding = 24;
+    const desiredHeight = Math.ceil(contentHeight + padding);
+    if (desiredHeight <= card.size.height) {
+      return;
+    }
+    updateRef.current((currentCard) => ({
+      ...currentCard,
+      size: {
+        ...currentCard.size,
+        height: Math.max(currentCard.size.height, desiredHeight),
+      },
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url, card.size.height]); // deliberately NOT depending on onUpdateCard
+
+  const handleImgLoad = () => {
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+    if (!url) {
+      return;
+    }
+    const contentHeight = container.scrollHeight;
+    const padding = 24;
+    const desiredHeight = Math.ceil(contentHeight + padding);
+    if (desiredHeight <= card.size.height) {
+      return;
+    }
+    updateRef.current((currentCard) => ({
+      ...currentCard,
+      size: {
+        ...currentCard.size,
+        height: Math.max(currentCard.size.height, desiredHeight),
+      },
+    }));
+  };
+
+  return (
+    <div ref={containerRef} className="link-fields">
+      <input
+        ref={inputRef}
+        defaultValue={url}
+        placeholder="https://example.com"
+        onPaste={() => {
+          // Let native paste fill the input, then read value after a tick
+          requestAnimationFrame(() => {
+            const val = inputRef.current?.value ?? "";
+            if (val !== url) {
+              onUpdateCard((currentCard) =>
+                currentCard.type === "link" ? { ...currentCard, url: val } : currentCard,
+              );
+            }
+          });
+        }}
+        onChange={(event) =>
+          onUpdateCard((currentCard) =>
+            currentCard.type === "link" ? { ...currentCard, url: event.target.value } : currentCard,
+          )
+        }
+      />
+      {preview ? (
+        <a className="link-preview" href={preview.href} target="_blank" rel="noreferrer">
+          {preview.imageUrl ? <img src={preview.imageUrl} alt={preview.title} className="link-preview-image" onLoad={handleImgLoad} /> : null}
+          <div className="link-preview-copy">
+            <div className="link-preview-title">{preview.title}</div>
+            <div className="link-preview-subtitle">{preview.subtitle}</div>
+          </div>
+        </a>
+      ) : null}
+    </div>
   );
 }
 
@@ -318,25 +395,8 @@ function TodoList(props: {
     setFocusNonce((current) => current + 1);
   };
 
-  useEffect(() => {
-    const list = listRef.current;
-    if (!list) {
-      return;
-    }
-    const contentHeight = list.scrollHeight;
-    const padding = 24;
-    const desiredHeight = Math.ceil(contentHeight + padding);
-    if (desiredHeight <= card.size.height) {
-      return;
-    }
-    onUpdateCard((currentCard) => ({
-      ...currentCard,
-      size: {
-        ...currentCard.size,
-        height: Math.max(currentCard.size.height, desiredHeight),
-      },
-    }));
-  }, [card.size.height, items, onUpdateCard]);
+  // NoteEditor, TodoList: auto-resize disabled to prevent render loops
+  // Card heights grow via user resize handle only
 
   useLayoutEffect(() => {
     const pendingIndex = pendingFocusIndexRef.current;
@@ -435,6 +495,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
     switch (card.type) {
       case "note":
       case "todo":
+        return { width: 304, height: 64 };
       case "link":
         return { width: 304, height: 64 };
       case "board":
@@ -460,7 +521,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
   const getEdgeCenter = (card: CardMeta, position: Point) => {
     if (card.type === "board") {
       return {
-        x: position.x + 50,
+        x: position.x + 30,
         y: position.y + 20,
       };
     }
@@ -474,17 +535,16 @@ export function CanvasBoard(props: CanvasBoardProps) {
   // Returns where a line from (fromX, fromY) to the card center hits the card's edge
   const getEdgeEndpoint = (card: CardMeta, cardPosition: Point, fromX: number, fromY: number) => {
     const center = card.type === "board"
-      ? { x: cardPosition.x + 50, y: cardPosition.y + 20 }
+      ? { x: cardPosition.x + 30, y: cardPosition.y + 20 }
       : { x: cardPosition.x + getDisplaySize(card).width / 2, y: cardPosition.y + getDisplaySize(card).height / 2 };
-    const size = getDisplaySize(card);
 
     const dx = center.x - fromX;
     const dy = center.y - fromY;
     if (Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001) return center;
 
-    // Determine which edge the line enters first using a stable clamp approach
-    const halfW = size.width / 2;
-    const halfH = size.height / 2;
+    // Use visual bounding box: board cards show as ~40x40 icon centered at (pos.x+50, pos.y+20)
+    const halfW = card.type === "board" ? 20 : getDisplaySize(card).width / 2;
+    const halfH = card.type === "board" ? 20 : getDisplaySize(card).height / 2;
 
     // Extend the line from center backward to find where it hits the bounding box
     // Line: P = center - t * (dx, dy), find smallest t > 0 where P is on the box edge
@@ -545,6 +605,73 @@ export function CanvasBoard(props: CanvasBoardProps) {
       y: (clientY - rect.top - props.boardBundle.board.viewport.y) / props.boardBundle.board.viewport.zoom,
     };
   };
+
+  const fitToView = useCallback(() => {
+    const cards = rootCards;
+    if (cards.length === 0) {
+      return;
+    }
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const card of cards) {
+      const pos = committedPositions[card.id] ?? card.position;
+      minX = Math.min(minX, pos.x);
+      minY = Math.min(minY, pos.y);
+      maxX = Math.max(maxX, pos.x + card.size.width);
+      maxY = Math.max(maxY, pos.y + card.size.height);
+    }
+
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      return;
+    }
+    const rect = canvas.getBoundingClientRect();
+    const padding = 40;
+    const availW = rect.width - padding * 2;
+    const availH = rect.height - padding * 2;
+    const contentW = maxX - minX;
+    const contentH = maxY - minY;
+
+    if (contentW <= 0 || contentH <= 0) {
+      return;
+    }
+
+    const zoom = Math.min(availW / contentW, availH / contentH, 1.8);
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    const x = rect.width / 2 - cx * zoom;
+    const y = rect.height / 2 - cy * zoom;
+
+    props.onViewportChange({ x, y, zoom });
+  }, [committedPositions, props, rootCards]);
+
+  const focusSelected = useCallback(() => {
+    if (props.selectedCardIds.length === 0) {
+      return;
+    }
+    const cardId = props.selectedCardIds[0];
+    const card = rootCardMap[cardId];
+    if (!card) {
+      return;
+    }
+    const pos = committedPositions[card.id] ?? card.position;
+
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      return;
+    }
+    const rect = canvas.getBoundingClientRect();
+    const padding = 60;
+    const availW = rect.width - padding * 2;
+    const availH = rect.height - padding * 2;
+    const zoom = Math.min(availW / card.size.width, availH / card.size.height, 1.8);
+    const cx = pos.x + card.size.width / 2;
+    const cy = pos.y + card.size.height / 2;
+    const x = rect.width / 2 - cx * zoom;
+    const y = rect.height / 2 - cy * zoom;
+
+    props.onViewportChange({ x, y, zoom });
+  }, [committedPositions, props, rootCardMap]);
 
   useEffect(() => {
     if (!draggingCard && !connectionPreview && !selectionBox && !resizingCard) {
@@ -1157,6 +1284,19 @@ export function CanvasBoard(props: CanvasBoardProps) {
           })}
         </div>
       </div>
+      <div className="canvas-actions">
+        <button type="button" className="canvas-action-btn" title="Fit all content" onClick={fitToView}>
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <path d="M2 10v4h4M14 6V2h-4M2 6V2h4M14 10v4h-4" />
+          </svg>
+        </button>
+        <button type="button" className="canvas-action-btn" title="Focus selected" onClick={focusSelected} disabled={props.selectedCardIds.length === 0}>
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <circle cx="8" cy="8" r="3" />
+            <circle cx="8" cy="8" r="7" />
+          </svg>
+        </button>
+      </div>
     </div>
   );
 }
@@ -1170,7 +1310,7 @@ function CardRenderer(props: CardRendererProps) {
 
   return (
     <div
-      className={`canvas-card ${isSelected ? "selected" : ""} ${isBoardCard ? "type-board" : ""} ${props.isDragging ? "dragging" : ""}`}
+      className={`canvas-card ${isSelected ? "selected" : ""} ${isBoardCard ? "type-board" : ""} ${props.isDragging ? "dragging" : ""} ${isBoardCard && card.cardColor ? "has-color" : ""}`}
       style={{
         left: props.displayPosition.x,
         top: props.displayPosition.y,
@@ -1219,7 +1359,7 @@ function CardRenderer(props: CardRendererProps) {
         }
       }}
     >
-      {isSelected && !isBoardCard ? (
+      {isSelected ? (
         <div className="color-bar">
           {CARD_COLORS.map((colorDef) => (
             <button
