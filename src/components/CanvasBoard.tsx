@@ -399,6 +399,49 @@ export function CanvasBoard(props: CanvasBoardProps) {
     };
   }, [committedPositions, connectionPreview, draggingCard, props, resizingCard, rootCards, selectionBox]);
 
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      return;
+    }
+
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault();
+
+      if (event.ctrlKey) {
+        const rect = canvas.getBoundingClientRect();
+        const worldX =
+          (event.clientX - rect.left - props.boardBundle.board.viewport.x) / props.boardBundle.board.viewport.zoom;
+        const worldY =
+          (event.clientY - rect.top - props.boardBundle.board.viewport.y) / props.boardBundle.board.viewport.zoom;
+        const nextZoom = Math.max(
+          0.4,
+          Math.min(1.8, props.boardBundle.board.viewport.zoom - event.deltaY * 0.01),
+        );
+        const nextX = event.clientX - rect.left - worldX * nextZoom;
+        const nextY = event.clientY - rect.top - worldY * nextZoom;
+        props.onViewportChange({
+          ...props.boardBundle.board.viewport,
+          x: nextX,
+          y: nextY,
+          zoom: nextZoom,
+        });
+        return;
+      }
+
+      props.onViewportChange({
+        ...props.boardBundle.board.viewport,
+        x: props.boardBundle.board.viewport.x - event.deltaX,
+        y: props.boardBundle.board.viewport.y - event.deltaY,
+      });
+    };
+
+    canvas.addEventListener("wheel", handleWheel, { passive: false });
+    return () => {
+      canvas.removeEventListener("wheel", handleWheel);
+    };
+  }, [props]);
+
   const edges = useMemo(() => {
     const result = props.boardBundle.board.edges
       .map((edge) => {
@@ -524,14 +567,6 @@ export function CanvasBoard(props: CanvasBoardProps) {
         onMouseLeave={() => {
           setIsPanning(false);
           setPanStart(null);
-        }}
-        onWheel={(event) => {
-          event.preventDefault();
-          const nextZoom = Math.max(0.4, Math.min(1.8, props.boardBundle.board.viewport.zoom - event.deltaY * 0.001));
-          props.onViewportChange({
-            ...props.boardBundle.board.viewport,
-            zoom: nextZoom,
-          });
         }}
       >
         <div
