@@ -17,12 +17,14 @@ interface CanvasBoardProps {
   onClearSelection: () => void;
   onUpdateCard: (cardId: string, updater: (card: CardMeta) => CardMeta) => void;
   onUpdateMarkdown: (cardId: string, markdown: string) => void;
+  onUpdateBoardCardTitle: (boardId: string, cardId: string, title: string) => void;
   onBringCardsToFront: (cardIds: string[]) => void;
   onMoveToBoard: (payload: DragCardPayload, boardId: string, position: Point) => void;
   onStartConnection: (cardId: string) => void;
   onCancelConnection: () => void;
   onFinishConnection: (cardId: string) => void;
   onOpenBoard: (childBoardId: string) => void;
+  onDeleteEdge: (edgeId: string) => void;
   onViewportChange: (viewport: { x: number; y: number; zoom: number }) => void;
   onDropExternalFiles: (files: File[], position: Point) => void | Promise<void>;
 }
@@ -39,6 +41,7 @@ interface CardRendererProps {
   onSelectCard: (cardId: string, multi: boolean) => void;
   onUpdateCard: (cardId: string, updater: (card: CardMeta) => CardMeta) => void;
   onUpdateMarkdown: (cardId: string, markdown: string) => void;
+  onUpdateBoardCardTitle: (boardId: string, cardId: string, title: string) => void;
   onMoveToBoard: (payload: DragCardPayload, boardId: string, position: Point) => void;
   onStartConnection: (cardId: string, anchorPoint: Point) => void;
   onFinishConnection: (cardId: string) => void;
@@ -107,8 +110,9 @@ function renderEditableContent(input: {
   isEditable: boolean;
   onUpdateCard: (updater: (card: CardMeta) => CardMeta) => void;
   onUpdateMarkdown: (markdown: string) => void;
+  onUpdateBoardCardTitle?: (title: string) => void;
 }) {
-  const { card, markdown, assetUrl, isEditable, onUpdateCard, onUpdateMarkdown } = input;
+  const { card, markdown, assetUrl, isEditable, onUpdateCard, onUpdateMarkdown, onUpdateBoardCardTitle } = input;
 
   if (card.type === "note") {
     return isEditable ? (
@@ -212,7 +216,38 @@ function renderEditableContent(input: {
   }
 
   if (card.type === "board") {
-    return <div className="board-preview">Double-click to open nested board</div>;
+    return (
+      <div className="board-card">
+        <div className="board-icon-shell">
+          <svg
+            className="board-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="#fff"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <rect x="3" y="3" width="8" height="8" rx="1.5" />
+            <rect x="13" y="3" width="8" height="8" rx="1.5" />
+            <rect x="3" y="13" width="8" height="8" rx="1.5" />
+            <rect x="13" y="13" width="8" height="8" rx="1.5" />
+          </svg>
+        </div>
+        <input
+          className="board-title-input"
+          value={card.title}
+          onChange={(event) => {
+            const newTitle = event.target.value;
+            onUpdateCard((currentCard) =>
+              currentCard.type === "board" ? { ...currentCard, title: newTitle } : currentCard,
+            );
+            onUpdateBoardCardTitle?.(newTitle);
+          }}
+          readOnly={!isEditable}
+        />
+      </div>
+    );
   }
 
   return <div className="removed-card">Column has been removed</div>;
@@ -380,6 +415,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
   const [selectionBox, setSelectionBox] = useState<SelectionBoxState | null>(null);
   const [committedPositions, setCommittedPositions] = useState<Record<string, Point>>({});
   const [resizingCard, setResizingCard] = useState<ResizingCardState | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
 
   const getMinSize = (card: CardMeta | undefined) => {
     if (!card) {
@@ -389,8 +425,9 @@ export function CanvasBoard(props: CanvasBoardProps) {
       case "note":
       case "todo":
       case "link":
-      case "board":
         return { width: 304, height: 64 };
+      case "board":
+        return { width: 180, height: 120 };
       case "image":
         return { width: 280, height: 220 };
       case "file":
@@ -407,6 +444,20 @@ export function CanvasBoard(props: CanvasBoardProps) {
       return resizingCard.size;
     }
     return card.size;
+  };
+
+  const getEdgeCenter = (card: CardMeta, position: Point) => {
+    if (card.type === "board") {
+      return {
+        x: position.x + 20,
+        y: position.y + 45,
+      };
+    }
+    const size = getDisplaySize(card);
+    return {
+      x: position.x + size.width / 2,
+      y: position.y + size.height / 2,
+    };
   };
 
   useEffect(() => {
@@ -509,7 +560,6 @@ export function CanvasBoard(props: CanvasBoardProps) {
         for (const [cardId, position] of Object.entries(draggingCard.positions)) {
           props.onUpdateCard(cardId, (card) => ({ ...card, position }));
         }
-        props.onBringCardsToFront(draggingCard.cardIds);
       }
 
       if (selectionBox) {
@@ -555,6 +605,27 @@ export function CanvasBoard(props: CanvasBoardProps) {
       window.removeEventListener("mouseup", handleMouseUp);
     };
   }, [committedPositions, connectionPreview, draggingCard, props, resizingCard, rootCards, selectionBox]);
+
+  // Delete selected edge via keyboard
+  useEffect(() => {
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Delete" && event.key !== "Backspace") {
+        return;
+      }
+      const target = event.target;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+        return;
+      }
+      if (!selectedEdgeId) {
+        return;
+      }
+      event.preventDefault();
+      props.onDeleteEdge?.(selectedEdgeId);
+      setSelectedEdgeId(null);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedEdgeId, props]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -612,13 +683,19 @@ export function CanvasBoard(props: CanvasBoardProps) {
         const toPosition = draggingCard?.positions[to.id] ?? committedPositions[to.id] ?? to.position;
         const fromSize = resizingCard?.cardId === from.id ? resizingCard.size : from.size;
         const toSize = resizingCard?.cardId === to.id ? resizingCard.size : to.size;
+        const fromCenter = from.type === "board"
+          ? getEdgeCenter(from, fromPosition)
+          : { x: fromPosition.x + fromSize.width / 2, y: fromPosition.y + fromSize.height / 2 };
+        const toCenter = to.type === "board"
+          ? getEdgeCenter(to, toPosition)
+          : { x: toPosition.x + toSize.width / 2, y: toPosition.y + toSize.height / 2 };
 
         return {
           id: edge.id,
-          x1: fromPosition.x + fromSize.width / 2,
-          y1: fromPosition.y + fromSize.height / 2,
-          x2: toPosition.x + toSize.width / 2,
-          y2: toPosition.y + toSize.height / 2,
+          x1: fromCenter.x,
+          y1: fromCenter.y,
+          x2: toCenter.x,
+          y2: toCenter.y,
         };
       })
       .filter(Boolean);
@@ -683,6 +760,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
 
           if (event.target === event.currentTarget || event.target === canvasInnerRef.current) {
             props.onClearSelection();
+            setSelectedEdgeId(null);
           }
         }}
         onMouseDown={(event) => {
@@ -736,16 +814,35 @@ export function CanvasBoard(props: CanvasBoardProps) {
           <svg className="edge-layer">
             {edges.map((edge) =>
               edge ? (
-                <line
-                  key={edge.id}
-                  x1={edge.x1}
-                  y1={edge.y1}
-                  x2={edge.x2}
-                  y2={edge.y2}
-                  stroke="#7f776d"
-                  strokeWidth={edge.id === "preview-edge" ? "3" : "2"}
-                  strokeDasharray={edge.id === "preview-edge" ? "6 4" : undefined}
-                />
+                <g key={edge.id}>
+                  {/* Invisible wider line for easier clicking */}
+                  <line
+                    x1={edge.x1}
+                    y1={edge.y1}
+                    x2={edge.x2}
+                    y2={edge.y2}
+                    stroke="transparent"
+                    strokeWidth="12"
+                    style={{ cursor: "pointer" }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (edge.id !== "preview-edge") {
+                        setSelectedEdgeId(edge.id);
+                        props.onClearSelection();
+                      }
+                    }}
+                  />
+                  <line
+                    x1={edge.x1}
+                    y1={edge.y1}
+                    x2={edge.x2}
+                    y2={edge.y2}
+                    stroke={selectedEdgeId === edge.id ? "#4a6cf7" : "#7f776d"}
+                    strokeWidth={edge.id === "preview-edge" ? "3" : selectedEdgeId === edge.id ? "3" : "2"}
+                    strokeDasharray={edge.id === "preview-edge" ? "6 4" : undefined}
+                    pointerEvents="none"
+                  />
+                </g>
               ) : null,
             )}
           </svg>
@@ -781,6 +878,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
                 onSelectCard={props.onSelectCard}
                 onUpdateCard={props.onUpdateCard}
                 onUpdateMarkdown={props.onUpdateMarkdown}
+                onUpdateBoardCardTitle={props.onUpdateBoardCardTitle}
                 onMoveToBoard={props.onMoveToBoard}
                 onStartConnection={(cardId, anchorPoint) => {
                   props.onStartConnection(cardId);
@@ -856,15 +954,15 @@ function CardRenderer(props: CardRendererProps) {
   const markdown = boardBundle.documents[card.id] ?? "";
   const isSelected = props.selectedCardIds.includes(card.id);
   const isEditable = props.activeCardId === card.id;
+  const isBoardCard = card.type === "board";
 
   return (
     <div
-      className={`canvas-card ${isSelected ? "selected" : ""} ${props.selectedCardIds.includes(card.id) ? "" : ""}`}
+      className={`canvas-card ${isSelected ? "selected" : ""} ${isBoardCard ? "type-board" : ""}`}
       style={{
         left: props.displayPosition.x,
         top: props.displayPosition.y,
-        width: props.displaySize.width,
-        height: props.displaySize.height,
+        ...(isBoardCard ? {} : { width: props.displaySize.width, height: props.displaySize.height }),
       }}
       onDragOver={(event) => {
         if (card.type !== "board") {
@@ -886,10 +984,20 @@ function CardRenderer(props: CardRendererProps) {
         }
         props.onMoveToBoard(payload, card.childBoardId, { x: 120, y: 120 });
       }}
-      onMouseDown={(event) => props.onStartPointerDrag(card, event)}
+      onMouseDown={(event) => {
+        if (isBoardCard && props.connectFromCardId && props.connectFromCardId !== card.id) {
+          return;
+        }
+        props.onStartPointerDrag(card, event);
+      }}
       onClick={(event) => {
         event.stopPropagation();
         props.onSelectCard(card.id, event.shiftKey);
+      }}
+      onMouseUp={(event) => {
+        if (props.connectFromCardId && props.connectFromCardId !== card.id) {
+          props.onFinishConnection(card.id);
+        }
       }}
       onDoubleClick={(event) => {
         event.stopPropagation();
@@ -898,22 +1006,18 @@ function CardRenderer(props: CardRendererProps) {
         }
       }}
     >
-      <div
-        className="connection-dot"
-        onMouseDown={(event) => {
-          event.stopPropagation();
-          props.onStartConnection(card.id, {
-            x: props.displayPosition.x + props.displaySize.width - 10,
-            y: props.displayPosition.y + 10,
-          });
-        }}
-        onMouseUp={(event) => {
-          event.stopPropagation();
-          if (props.connectFromCardId && props.connectFromCardId !== card.id) {
-            props.onFinishConnection(card.id);
-          }
-        }}
-      />
+      {!isBoardCard ? (
+        <div
+          className="connection-dot"
+          onMouseDown={(event) => {
+            event.stopPropagation();
+            props.onStartConnection(card.id, {
+              x: props.displayPosition.x + props.displaySize.width - 10,
+              y: props.displayPosition.y + 10,
+            });
+          }}
+        />
+      ) : null}
 
       {renderEditableContent({
         card,
@@ -922,14 +1026,17 @@ function CardRenderer(props: CardRendererProps) {
         isEditable,
         onUpdateCard: (updater) => props.onUpdateCard(card.id, updater),
         onUpdateMarkdown: (nextMarkdown) => props.onUpdateMarkdown(card.id, nextMarkdown),
+        onUpdateBoardCardTitle: (title) => props.onUpdateBoardCardTitle(props.boardBundle.board.id, card.id, title),
       })}
 
-      <button
-        type="button"
-        className="resize-handle"
-        aria-label="Resize card"
-        onMouseDown={(event) => props.onStartResize(card, event)}
-      />
+      {!isBoardCard ? (
+        <button
+          type="button"
+          className="resize-handle"
+          aria-label="Resize card"
+          onMouseDown={(event) => props.onStartResize(card, event)}
+        />
+      ) : null}
     </div>
   );
 }

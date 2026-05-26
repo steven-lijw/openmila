@@ -120,6 +120,9 @@ export default function App() {
             onUpdateMarkdown={(cardId, markdown) =>
               controller.updateCardMarkdown(controller.currentBoard!.board.id, cardId, markdown)
             }
+            onUpdateBoardCardTitle={(boardId, cardId, title) =>
+              controller.updateBoardCardTitle(boardId, cardId, title)
+            }
             onBringCardsToFront={(cardIds) =>
               controller.bringCardsToFront(controller.currentBoard!.board.id, cardIds)
             }
@@ -132,6 +135,7 @@ export default function App() {
             onStartConnection={controller.startConnection}
             onCancelConnection={controller.cancelConnection}
             onFinishConnection={(cardId) => controller.finishConnection(controller.currentBoard!.board.id, cardId)}
+            onDeleteEdge={(edgeId) => controller.deleteEdge(edgeId)}
             onOpenBoard={controller.openChildBoard}
             onViewportChange={(viewport) => controller.setViewport(controller.currentBoard!.board.id, viewport)}
             onDropExternalFiles={(files, position) =>

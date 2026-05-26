@@ -240,6 +240,13 @@ export function updateEdgeList(board: BoardFile, edge: Edge): BoardFile {
   };
 }
 
+export function removeEdge(board: BoardFile, edgeId: string): BoardFile {
+  return {
+    ...board,
+    edges: board.edges.filter((item) => item.id !== edgeId),
+  };
+}
+
 export function moveCardsToFront(board: BoardFile, cardIds: string[]): BoardFile {
   if (cardIds.length === 0) {
     return board;

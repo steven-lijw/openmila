@@ -345,7 +345,6 @@ button {
   inset: 0;
   width: 100%;
   height: 100%;
-  pointer-events: none;
   z-index: 0;
 }
 
@@ -371,6 +370,19 @@ button {
   display: flex;
   flex-direction: column;
   contain: layout paint;
+}
+
+.canvas-card.type-board {
+  border: none;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: visible;
+  contain: none;
 }
 
 .connection-dot {
@@ -578,6 +590,49 @@ button {
   color: var(--color-text-muted);
   font-size: 13px;
   line-height: 1.5;
+}
+
+.board-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 100%;
+  width: 100%;
+}
+
+.board-icon-shell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--color-primary);
+  flex-shrink: 0;
+}
+
+.board-icon {
+  width: 22px;
+  height: 22px;
+}
+
+.board-title-input {
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+  outline: none;
+  text-align: center;
+}
+
+.board-title-input[readonly] {
+  color: var(--color-text-muted);
+  cursor: default;
 }
 
 

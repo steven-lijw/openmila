@@ -22,7 +22,7 @@ const DEFAULT_CARD_SIZE = {
   image: { width: 280, height: 220 },
   file: { width: 320, height: 260 },
   column: { width: 300, height: 360 },
-  board: { width: 304, height: 64 },
+  board: { width: 180, height: 120 },
 } as const;
 
 export function createWorkspace(): { workspace: WorkspaceFile; rootBoard: BoardBundle } {

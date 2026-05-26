@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getFileExtension } from "../core/filePreview";
-import { addCardToBoard, createCardCreationResult, getBoard, getCard, moveCardToRoot, moveCardsToFront, patchCard, removeCardFromBoard, replaceBoardBundle, setBoardTitle, setCardDocument, updateEdgeList } from "../core/boardOperations";
+import { addCardToBoard, createCardCreationResult, getBoard, getCard, moveCardToRoot, moveCardsToFront, patchCard, removeEdge, removeCardFromBoard, replaceBoardBundle, setBoardTitle, setCardDocument, updateEdgeList } from "../core/boardOperations";
 import { createId } from "../core/ids";
 import { BrowserFsVault } from "../storage/fsVault";
 import type { AppState, BoardBundle, CardMeta, CardType, DragCardPayload, Edge, Point } from "../types";
@@ -33,10 +33,26 @@ export function useWorkspaceController() {
   const [state, setState] = useState<AppState>(EMPTY_STATE);
   const vaultRef = useRef<BrowserFsVault | null>(null);
   const stateRef = useRef<AppState>(EMPTY_STATE);
+  const undoStackRef = useRef<Array<{ workspace: AppState["workspace"]; boards: Record<string, BoardBundle>; currentBoardId: string | null }>>([]);
 
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  const pushUndo = useCallback(() => {
+    const current = stateRef.current;
+    if (!current.workspace) {
+      return;
+    }
+    undoStackRef.current = [
+      ...undoStackRef.current.slice(-49),
+      {
+        workspace: current.workspace,
+        boards: current.boards,
+        currentBoardId: current.currentBoardId,
+      },
+    ];
+  }, []);
 
   const setError = useCallback((error: unknown) => {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -126,6 +142,7 @@ export function useWorkspaceController() {
   }, [state.boards, state.currentBoardId]);
 
   const updateBoardBundle = useCallback((boardId: string, nextBundle: BoardBundle) => {
+    pushUndo();
     setState((current) => ({
       ...current,
       boards: {
@@ -134,16 +151,17 @@ export function useWorkspaceController() {
       },
       hasUnsavedChanges: true,
     }));
-  }, []);
+  }, [pushUndo]);
 
   const updateWorkspaceAndBoards = useCallback((input: { workspace?: AppState["workspace"]; bundles?: Record<string, BoardBundle> }) => {
+    pushUndo();
     setState((current) => ({
       ...current,
       workspace: input.workspace ?? current.workspace,
       boards: input.bundles ? { ...current.boards, ...input.bundles } : current.boards,
       hasUnsavedChanges: true,
     }));
-  }, []);
+  }, [pushUndo]);
 
   const persistStateSnapshot = useCallback(async (input: {
     workspace: AppState["workspace"];
@@ -329,6 +347,58 @@ export function useWorkspaceController() {
     updateBoardBundle(boardId, setCardDocument(bundle, cardId, markdown));
   }, [updateBoardBundle]);
 
+  const updateBoardCardTitle = useCallback((boardId: string, cardId: string, title: string) => {
+    const latestState = stateRef.current;
+    if (!latestState.workspace) {
+      return;
+    }
+    const bundle = getBoard(latestState, boardId);
+    const card = getCard(bundle.board, cardId);
+    if (card.type !== "board") {
+      return;
+    }
+    // Update card title
+    let nextBundle = replaceBoardBundle(bundle, patchCard(bundle.board, cardId, (c) =>
+      c.type === "board" ? { ...c, title } : c,
+    ));
+    // Update child board title
+    const childBoard = latestState.boards[card.childBoardId];
+    if (childBoard) {
+      const updatedChild = setBoardTitle(childBoard, title);
+      nextBundle = {
+        ...nextBundle,
+        documents: {
+          ...nextBundle.documents,
+          ...updatedChild.documents,
+        },
+      };
+      const nextWorkspace = {
+        ...latestState.workspace,
+        boards: latestState.workspace.boards.map((boardItem) =>
+          boardItem.id === card.childBoardId
+            ? {
+                ...boardItem,
+                title,
+                slug: updatedChild.board.slug,
+              }
+            : boardItem,
+        ),
+      };
+      setState((current) => ({
+        ...current,
+        workspace: nextWorkspace,
+        boards: {
+          ...current.boards,
+          [boardId]: nextBundle,
+          [card.childBoardId]: updatedChild,
+        },
+        hasUnsavedChanges: true,
+      }));
+    } else {
+      updateBoardBundle(boardId, nextBundle);
+    }
+  }, [updateBoardBundle]);
+
   const bringCardsToFront = useCallback((boardId: string, cardIds: string[]) => {
     if (cardIds.length === 0) {
       return;
@@ -363,6 +433,7 @@ export function useWorkspaceController() {
       destinationBundle = moveCardToRoot(destinationBundle, payload.cardId, destination.position);
     }
 
+    pushUndo();
     setState((current) => ({
       ...current,
       boards: {
@@ -372,7 +443,7 @@ export function useWorkspaceController() {
       },
       hasUnsavedChanges: true,
     }));
-  }, []);
+  }, [pushUndo]);
 
   const deleteSelectedCards = useCallback(() => {
     const latestState = stateRef.current;
@@ -407,6 +478,7 @@ export function useWorkspaceController() {
 
     nextBoards[latestState.currentBoardId] = nextBundle;
 
+    pushUndo();
     setState((current) => ({
       ...current,
       boards: nextBoards,
@@ -421,7 +493,7 @@ export function useWorkspaceController() {
       workspace: nextWorkspace,
       boards: nextBoards,
     }).catch(setError);
-  }, [persistStateSnapshot, setError]);
+  }, [persistStateSnapshot, pushUndo, setError]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -478,6 +550,15 @@ export function useWorkspaceController() {
     }));
   }, [updateBoardBundle]);
 
+  const deleteEdge = useCallback((edgeId: string) => {
+    const latestState = stateRef.current;
+    if (!latestState.currentBoardId) {
+      return;
+    }
+    const bundle = getBoard(latestState, latestState.currentBoardId);
+    updateBoardBundle(latestState.currentBoardId, replaceBoardBundle(bundle, removeEdge(bundle.board, edgeId)));
+  }, [updateBoardBundle]);
+
   const openChildBoard = useCallback((childBoardId: string) => {
     setState((current) => {
       if (!current.workspace) {
@@ -507,6 +588,41 @@ export function useWorkspaceController() {
       activeCardId: null,
     }));
   }, [currentBoard]);
+
+  const undo = useCallback(() => {
+    const snapshot = undoStackRef.current.pop();
+    if (!snapshot) {
+      return;
+    }
+    setState((current) => ({
+      ...current,
+      workspace: snapshot.workspace,
+      boards: snapshot.boards,
+      currentBoardId: snapshot.currentBoardId,
+      selectedCardIds: [],
+      activeCardId: null,
+      connectFromCardId: null,
+      hasUnsavedChanges: true,
+    }));
+  }, []);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === "z") {
+        const target = event.target;
+        if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+          return;
+        }
+        event.preventDefault();
+        undo();
+        return;
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [undo]);
 
   const updateCurrentBoardTitle = useCallback((title: string) => {
     if (!currentBoard || !state.workspace) {
@@ -578,12 +694,15 @@ export function useWorkspaceController() {
     clearSelection,
     updateCard,
     updateCardMarkdown,
+    updateBoardCardTitle,
     bringCardsToFront,
     moveCardByDrag,
     deleteSelectedCards,
     startConnection,
     cancelConnection,
     finishConnection,
+    deleteEdge,
+    undo,
     openChildBoard,
     goToParentBoard,
     updateCurrentBoardTitle,
