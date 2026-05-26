@@ -5,6 +5,7 @@ import { createId } from "../core/ids";
 import { getLinkPreview } from "../core/linkPreview";
 import { parseTodoMarkdown, stringifyTodoMarkdown } from "../core/todoMarkdown";
 import { CARD_COLORS } from "../core/model";
+import { marked } from "marked";
 import type { BoardBundle, CardMeta, DragCardPayload, DragToolPayload, Point } from "../types";
 
 interface CanvasBoardProps {
@@ -125,7 +126,10 @@ function renderEditableContent(input: {
         onUpdateCard={onUpdateCard}
       />
     ) : (
-      <div className="card-preview">{markdown || "Empty note"}</div>
+      <div
+        className="card-preview markdown-body"
+        dangerouslySetInnerHTML={{ __html: markdown ? marked.parse(markdown) : "" }}
+      />
     );
   }
 
