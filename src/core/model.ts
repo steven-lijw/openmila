@@ -16,13 +16,13 @@ import type {
 } from "../types";
 
 const DEFAULT_CARD_SIZE = {
-  note: { width: 260, height: 180 },
-  todo: { width: 260, height: 180 },
-  link: { width: 280, height: 150 },
+  note: { width: 304, height: 64 },
+  todo: { width: 304, height: 64 },
+  link: { width: 304, height: 64 },
   image: { width: 280, height: 220 },
   file: { width: 320, height: 260 },
   column: { width: 300, height: 360 },
-  board: { width: 280, height: 180 },
+  board: { width: 304, height: 64 },
 } as const;
 
 export function createWorkspace(): { workspace: WorkspaceFile; rootBoard: BoardBundle } {

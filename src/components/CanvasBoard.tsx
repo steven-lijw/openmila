@@ -33,6 +33,7 @@ interface CardRendererProps {
   activeCardId: string | null;
   connectFromCardId: string | null;
   displayPosition: Point;
+  displaySize: { width: number; height: number };
   onSelectCard: (cardId: string, multi: boolean) => void;
   onUpdateCard: (cardId: string, updater: (card: CardMeta) => CardMeta) => void;
   onUpdateMarkdown: (cardId: string, markdown: string) => void;
@@ -41,6 +42,7 @@ interface CardRendererProps {
   onFinishConnection: (cardId: string) => void;
   onOpenBoard: (childBoardId: string) => void;
   onStartPointerDrag: (card: CardMeta, event: MouseEvent<HTMLDivElement>) => void;
+  onStartResize: (card: CardMeta, event: MouseEvent<HTMLButtonElement>) => void;
 }
 
 interface DraggingCardState {
@@ -59,6 +61,13 @@ interface ConnectionPreviewState {
 interface SelectionBoxState {
   start: Point;
   current: Point;
+}
+
+interface ResizingCardState {
+  cardId: string;
+  startPointer: Point;
+  startSize: { width: number; height: number };
+  size: { width: number; height: number };
 }
 
 function readDragPayload(event: DragEvent): DragToolPayload | DragCardPayload | null {
@@ -82,7 +91,7 @@ function isInteractiveElement(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
     return false;
   }
-  return Boolean(target.closest("input, textarea, a, .connection-anchor"));
+  return Boolean(target.closest("input, textarea, a, .connection-dot, .resize-handle"));
 }
 
 function pointsEqual(a: Point | undefined, b: Point | undefined) {
@@ -236,6 +245,14 @@ export function CanvasBoard(props: CanvasBoardProps) {
   const [connectionPreview, setConnectionPreview] = useState<ConnectionPreviewState | null>(null);
   const [selectionBox, setSelectionBox] = useState<SelectionBoxState | null>(null);
   const [committedPositions, setCommittedPositions] = useState<Record<string, Point>>({});
+  const [resizingCard, setResizingCard] = useState<ResizingCardState | null>(null);
+
+  const getDisplaySize = (card: CardMeta) => {
+    if (resizingCard?.cardId === card.id) {
+      return resizingCard.size;
+    }
+    return card.size;
+  };
 
   useEffect(() => {
     for (const card of props.boardBundle.board.cards) {
@@ -284,7 +301,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
   };
 
   useEffect(() => {
-    if (!draggingCard && !connectionPreview && !selectionBox) {
+    if (!draggingCard && !connectionPreview && !selectionBox && !resizingCard) {
       return;
     }
 
@@ -320,6 +337,14 @@ export function CanvasBoard(props: CanvasBoardProps) {
       if (selectionBox) {
         setSelectionBox((current) => (current ? { ...current, current: point } : null));
       }
+
+      if (resizingCard) {
+        const nextWidth = Math.max(160, resizingCard.startSize.width + (point.x - resizingCard.startPointer.x));
+        const nextHeight = Math.max(120, resizingCard.startSize.height + (point.y - resizingCard.startPointer.y));
+        setResizingCard((current) =>
+          current ? { ...current, size: { width: nextWidth, height: nextHeight } } : null,
+        );
+      }
     };
 
     const handleMouseUp = () => {
@@ -340,8 +365,9 @@ export function CanvasBoard(props: CanvasBoardProps) {
           .filter((card) => {
             const displayPosition =
               draggingCard?.positions[card.id] ?? committedPositions[card.id] ?? card.position;
-            const right = displayPosition.x + card.size.width;
-            const bottom = displayPosition.y + card.size.height;
+            const displaySize = resizingCard?.cardId === card.id ? resizingCard.size : card.size;
+            const right = displayPosition.x + displaySize.width;
+            const bottom = displayPosition.y + displaySize.height;
             return right >= minX && displayPosition.x <= maxX && bottom >= minY && displayPosition.y <= maxY;
           })
           .map((card) => card.id);
@@ -357,6 +383,11 @@ export function CanvasBoard(props: CanvasBoardProps) {
         setConnectionPreview(null);
       }
 
+      if (resizingCard) {
+        props.onUpdateCard(resizingCard.cardId, (card) => ({ ...card, size: resizingCard.size }));
+        setResizingCard(null);
+      }
+
       setDraggingCard(null);
     };
 
@@ -366,7 +397,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [committedPositions, connectionPreview, draggingCard, props, rootCards, selectionBox]);
+  }, [committedPositions, connectionPreview, draggingCard, props, resizingCard, rootCards, selectionBox]);
 
   const edges = useMemo(() => {
     const result = props.boardBundle.board.edges
@@ -379,13 +410,15 @@ export function CanvasBoard(props: CanvasBoardProps) {
 
         const fromPosition = draggingCard?.positions[from.id] ?? committedPositions[from.id] ?? from.position;
         const toPosition = draggingCard?.positions[to.id] ?? committedPositions[to.id] ?? to.position;
+        const fromSize = resizingCard?.cardId === from.id ? resizingCard.size : from.size;
+        const toSize = resizingCard?.cardId === to.id ? resizingCard.size : to.size;
 
         return {
           id: edge.id,
-          x1: fromPosition.x + from.size.width / 2,
-          y1: fromPosition.y + from.size.height / 2,
-          x2: toPosition.x + to.size.width / 2,
-          y2: toPosition.y + to.size.height / 2,
+          x1: fromPosition.x + fromSize.width / 2,
+          y1: fromPosition.y + fromSize.height / 2,
+          x2: toPosition.x + toSize.width / 2,
+          y2: toPosition.y + toSize.height / 2,
         };
       })
       .filter(Boolean);
@@ -401,7 +434,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
     }
 
     return result;
-  }, [committedPositions, connectionPreview, draggingCard, props.boardBundle.board.edges, rootCardMap]);
+  }, [committedPositions, connectionPreview, draggingCard, props.boardBundle.board.edges, resizingCard, rootCardMap]);
 
   const viewportStyle = {
     transform: `translate(${props.boardBundle.board.viewport.x}px, ${props.boardBundle.board.viewport.y}px) scale(${props.boardBundle.board.viewport.zoom})`,
@@ -540,6 +573,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
           {rootCards.map((card) => {
             const displayPosition =
               draggingCard?.positions[card.id] ?? committedPositions[card.id] ?? card.position;
+            const displaySize = getDisplaySize(card);
 
             return (
               <CardRenderer
@@ -551,6 +585,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
                 activeCardId={props.activeCardId}
                 connectFromCardId={props.connectFromCardId}
                 displayPosition={displayPosition}
+                displaySize={displaySize}
                 onSelectCard={props.onSelectCard}
                 onUpdateCard={props.onUpdateCard}
                 onUpdateMarkdown={props.onUpdateMarkdown}
@@ -603,6 +638,16 @@ export function CanvasBoard(props: CanvasBoardProps) {
                     ),
                   });
                 }}
+                onStartResize={(cardMeta, event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setResizingCard({
+                    cardId: cardMeta.id,
+                    startPointer: screenToCanvas(event.clientX, event.clientY),
+                    startSize: cardMeta.size,
+                    size: cardMeta.size,
+                  });
+                }}
               />
             );
           })}
@@ -624,8 +669,8 @@ function CardRenderer(props: CardRendererProps) {
       style={{
         left: props.displayPosition.x,
         top: props.displayPosition.y,
-        width: card.size.width,
-        minHeight: card.size.height,
+        width: props.displaySize.width,
+        height: props.displaySize.height,
       }}
       onDragOver={(event) => {
         if (card.type !== "board") {
@@ -659,12 +704,21 @@ function CardRenderer(props: CardRendererProps) {
         }
       }}
     >
-      <ConnectionAnchors
-        card={card}
-        position={props.displayPosition}
-        connectFromCardId={props.connectFromCardId}
-        onStartConnection={props.onStartConnection}
-        onFinishConnection={props.onFinishConnection}
+      <div
+        className="connection-dot"
+        onMouseDown={(event) => {
+          event.stopPropagation();
+          props.onStartConnection(card.id, {
+            x: props.displayPosition.x + props.displaySize.width - 10,
+            y: props.displayPosition.y + 10,
+          });
+        }}
+        onMouseUp={(event) => {
+          event.stopPropagation();
+          if (props.connectFromCardId && props.connectFromCardId !== card.id) {
+            props.onFinishConnection(card.id);
+          }
+        }}
       />
 
       {renderEditableContent({
@@ -675,51 +729,13 @@ function CardRenderer(props: CardRendererProps) {
         onUpdateCard: (updater) => props.onUpdateCard(card.id, updater),
         onUpdateMarkdown: (nextMarkdown) => props.onUpdateMarkdown(card.id, nextMarkdown),
       })}
+
+      <button
+        type="button"
+        className="resize-handle"
+        aria-label="Resize card"
+        onMouseDown={(event) => props.onStartResize(card, event)}
+      />
     </div>
-  );
-}
-
-function ConnectionAnchors(props: {
-  card: CardMeta;
-  position: Point;
-  connectFromCardId: string | null;
-  onStartConnection: (cardId: string, anchorPoint: Point) => void;
-  onFinishConnection: (cardId: string) => void;
-}) {
-  const { width, height } = props.card.size;
-  const anchors = [
-    { key: "top", className: "anchor-top", point: { x: props.position.x + width / 2, y: props.position.y } },
-    {
-      key: "right",
-      className: "anchor-right",
-      point: { x: props.position.x + width, y: props.position.y + height / 2 },
-    },
-    {
-      key: "bottom",
-      className: "anchor-bottom",
-      point: { x: props.position.x + width / 2, y: props.position.y + height },
-    },
-    { key: "left", className: "anchor-left", point: { x: props.position.x, y: props.position.y + height / 2 } },
-  ];
-
-  return (
-    <>
-      {anchors.map((anchor) => (
-        <div
-          key={anchor.key}
-          className={`connection-anchor ${anchor.className}`}
-          onMouseDown={(event) => {
-            event.stopPropagation();
-            props.onStartConnection(props.card.id, anchor.point);
-          }}
-          onMouseUp={(event) => {
-            event.stopPropagation();
-            if (props.connectFromCardId && props.connectFromCardId !== props.card.id) {
-              props.onFinishConnection(props.card.id);
-            }
-          }}
-        />
-      ))}
-    </>
   );
 }

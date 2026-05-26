@@ -36,17 +36,12 @@ export default function App() {
       <main className="app-main">
         <header className="topbar">
           <div className="topbar-left">
-            <button
-              type="button"
-              className="topbar-button"
-              onClick={() => controller.goToParentBoard()}
-              disabled={!controller.currentBoard?.board.parentBoardId}
-            >
-              Back
-            </button>
-            <button type="button" className="topbar-button" onClick={() => void controller.openVault("picker")}>
-              Open vault
-            </button>
+            <div className="breadcrumb-bar">
+              <span className="breadcrumb-logo">M</span>
+              <span className="breadcrumb">
+                {boardPath.length > 0 ? boardPath.join(" / ") : "Workspace"}
+              </span>
+            </div>
           </div>
 
           <div className="topbar-center">
@@ -61,17 +56,22 @@ export default function App() {
           </div>
 
           <div className="topbar-right">
+            <button
+              type="button"
+              className="nav-button"
+              onClick={() => controller.goToParentBoard()}
+              disabled={!controller.currentBoard?.board.parentBoardId}
+            >
+              Back
+            </button>
+            <button type="button" className="nav-button" onClick={() => void controller.openVault("picker")}>
+              Open vault
+            </button>
+            <span className="nav-divider" />
             <span className="status-pill">{controller.state.vaultName ?? "No vault"}</span>
             <span className="status-pill">{saveStatus}</span>
           </div>
         </header>
-
-        <div className="topbar-breadcrumb-row">
-          <div className="breadcrumb-bar">
-            <span className="breadcrumb-label">Board</span>
-            <span className="breadcrumb">{boardPath.length > 0 ? boardPath.join(" / ") : "Workspace"}</span>
-          </div>
-        </div>
 
         {!controller.state.isReady ? <div className="loading-state">Loading vault...</div> : null}
         {controller.state.error ? <div className="error-banner">{controller.state.error}</div> : null}
