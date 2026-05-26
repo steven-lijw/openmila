@@ -4,6 +4,11 @@ import { useWorkspaceController } from "./state/useWorkspaceController";
 
 export default function App() {
   const controller = useWorkspaceController();
+  const saveStatus = controller.state.isSaving
+    ? "Saving..."
+    : controller.state.hasUnsavedChanges
+      ? "Unsaved"
+      : "Saved";
   const boardPath = (() => {
     if (!controller.currentBoard || !controller.state.workspace) {
       return [];
@@ -33,39 +38,42 @@ export default function App() {
           <div className="topbar-left">
             <button
               type="button"
+              className="topbar-button"
               onClick={() => controller.goToParentBoard()}
               disabled={!controller.currentBoard?.board.parentBoardId}
             >
               Back
             </button>
-            <button type="button" onClick={() => void controller.openVault("picker")}>
+            <button type="button" className="topbar-button" onClick={() => void controller.openVault("picker")}>
               Open vault
             </button>
           </div>
 
           <div className="topbar-center">
-            <input
-              className="board-title-input"
-              value={controller.currentBoard?.board.title ?? ""}
-              onChange={(event) => controller.updateCurrentBoardTitle(event.target.value)}
-              placeholder="Board title"
-            />
+            <div className="board-title-shell">
+              <input
+                className="board-title-input"
+                value={controller.currentBoard?.board.title ?? ""}
+                onChange={(event) => controller.updateCurrentBoardTitle(event.target.value)}
+                placeholder="Board title"
+              />
+            </div>
           </div>
 
           <div className="topbar-right">
-            <span>{controller.state.vaultName ?? "No vault"}</span>
-            <span>{controller.state.isSaving ? "Saving..." : controller.state.hasUnsavedChanges ? "Unsaved" : "Saved"}</span>
+            <span className="status-pill">{controller.state.vaultName ?? "No vault"}</span>
+            <span className="status-pill">{saveStatus}</span>
           </div>
         </header>
 
         <div className="topbar-breadcrumb-row">
           <div className="breadcrumb-bar">
-            <span className="breadcrumb-label">Navigation</span>
+            <span className="breadcrumb-label">Board</span>
             <span className="breadcrumb">{boardPath.length > 0 ? boardPath.join(" / ") : "Workspace"}</span>
           </div>
         </div>
 
-        {!controller.state.isReady ? <div className="empty-state">Loading vault...</div> : null}
+        {!controller.state.isReady ? <div className="loading-state">Loading vault...</div> : null}
         {controller.state.error ? <div className="error-banner">{controller.state.error}</div> : null}
 
         {!controller.currentBoard && controller.state.isReady ? (
