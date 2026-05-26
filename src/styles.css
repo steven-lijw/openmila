@@ -526,6 +526,22 @@ button {
   border-color: var(--color-primary);
 }
 
+.edge-menu-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  padding: 4px 6px;
+  font-size: 11px;
+  background: transparent;
+  outline: none;
+  color: var(--color-text);
+}
+
+.edge-menu-input:focus {
+  border-color: var(--color-primary);
+}
+
 .card-textarea,
 .link-fields input,
 .link-fields textarea,

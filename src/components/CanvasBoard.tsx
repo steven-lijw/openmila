@@ -758,6 +758,9 @@ export function CanvasBoard(props: CanvasBoardProps) {
           arrowFromSrcY: fromEndpoint.y - (fromDy / fromDist) * 10,
           arrowDirection: dir,
           lineStyle: style,
+          label: edge.label,
+          midX: (fromCenter.x + toCenter.x) / 2,
+          midY: (fromCenter.y + toCenter.y) / 2,
         };
       })
       .filter(Boolean);
@@ -779,6 +782,9 @@ export function CanvasBoard(props: CanvasBoardProps) {
         arrowFromSrcY: connectionPreview.pointer.y,
         arrowDirection: "right" as const,
         lineStyle: "solid" as const,
+        label: undefined,
+        midX: (connectionPreview.start.x + connectionPreview.pointer.x) / 2,
+        midY: (connectionPreview.start.y + connectionPreview.pointer.y) / 2,
       });
     }
 
@@ -954,6 +960,31 @@ export function CanvasBoard(props: CanvasBoardProps) {
                       pointerEvents="none"
                     />
                   ) : null}
+                  {/* Edge label */}
+                  {edge.label && edge.id !== "preview-edge" ? (
+                    <g pointerEvents="none">
+                      <rect
+                        x={edge.midX - 50}
+                        y={edge.midY - 10}
+                        width={100}
+                        height={20}
+                        rx={4}
+                        fill="rgba(255,255,255,0.92)"
+                        stroke={selectedEdgeId === edge.id ? "#4a6cf7" : "#ccc"}
+                        strokeWidth={0.5}
+                      />
+                      <text
+                        x={edge.midX}
+                        y={edge.midY + 4}
+                        textAnchor="middle"
+                        fill="#555"
+                        fontSize={11}
+                        fontFamily="sans-serif"
+                      >
+                        {edge.label}
+                      </text>
+                    </g>
+                  ) : null}
                 </g>
               ) : null,
             )}
@@ -1021,6 +1052,19 @@ export function CanvasBoard(props: CanvasBoardProps) {
                       </button>
                     ))}
                   </div>
+                </div>
+                <div className="edge-menu-section">
+                  <span className="edge-menu-label">Label</span>
+                  <input
+                    className="edge-menu-input"
+                    value={edgeDef?.label ?? ""}
+                    placeholder="Add label…"
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      props.onUpdateEdge(selectedEdgeId, (edge) => ({ ...edge, label: val || undefined }));
+                    }}
+                  />
                 </div>
               </div>
             );

@@ -90,6 +90,7 @@ export interface Edge {
   toCardId: string;
   arrowDirection?: "left" | "right" | "both";
   lineStyle?: "solid" | "dashed";
+  label?: string;
 }
 
 export interface BoardFile {
