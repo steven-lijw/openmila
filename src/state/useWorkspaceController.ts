@@ -303,7 +303,7 @@ export function useWorkspaceController() {
     setState((current) => ({
       ...current,
       selectedCardIds: [creation.createdCardId],
-      activeCardId: creation.createdCardId,
+      activeCardId: null,
     }));
   }, [createAssetCardFromFile, updateWorkspaceAndBoards]);
 
@@ -317,9 +317,7 @@ export function useWorkspaceController() {
         : [cardId];
       const activeCardId = multi
         ? null
-        : isAlreadySelected
-          ? cardId
-          : null;
+        : cardId;
       return {
         ...current,
         selectedCardIds,

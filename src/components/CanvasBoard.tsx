@@ -5,7 +5,6 @@ import { createId } from "../core/ids";
 import { getLinkPreview } from "../core/linkPreview";
 import { parseTodoMarkdown, stringifyTodoMarkdown } from "../core/todoMarkdown";
 import { CARD_COLORS } from "../core/model";
-import { marked } from "marked";
 import type { BoardBundle, CardMeta, DragCardPayload, DragToolPayload, Point } from "../types";
 
 interface CanvasBoardProps {
@@ -100,7 +99,7 @@ function isInteractiveElement(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
     return false;
   }
-  return Boolean(target.closest("input, textarea, a, .connection-dot, .resize-handle"));
+  return Boolean(target.closest("input, textarea, a, .connection-dot, .resize-handle, .color-bar, .edge-menu, .format-btn"));
 }
 
 function pointsEqual(a: Point | undefined, b: Point | undefined) {
@@ -127,10 +126,7 @@ function renderEditableContent(input: {
         onUpdateCard={onUpdateCard}
       />
     ) : markdown ? (
-      <div
-        className="card-preview markdown-body"
-        dangerouslySetInnerHTML={{ __html: marked.parse(markdown) }}
-      />
+      <div className="card-preview">{markdown}</div>
     ) : (
       <div className="card-preview card-preview-empty">Start writing…</div>
     );
@@ -1092,9 +1088,9 @@ export function CanvasBoard(props: CanvasBoardProps) {
                     <g pointerEvents="none">
                       <rect
                         x={edge.midX - 50}
-                        y={edge.midY - 10}
+                        y={edge.midY - 12}
                         width={100}
-                        height={20}
+                        height={24}
                         rx={4}
                         fill="rgba(255,255,255,0.92)"
                         stroke={selectedEdgeId === edge.id ? "#4a6cf7" : "#ccc"}
@@ -1102,10 +1098,10 @@ export function CanvasBoard(props: CanvasBoardProps) {
                       />
                       <text
                         x={edge.midX}
-                        y={edge.midY + 4}
+                        y={edge.midY + 5}
                         textAnchor="middle"
                         fill="#555"
-                        fontSize={11}
+                        fontSize={13}
                         fontFamily="sans-serif"
                       >
                         {edge.label}
@@ -1128,74 +1124,6 @@ export function CanvasBoard(props: CanvasBoardProps) {
               }}
             />
           ) : null}
-
-          {/* Edge style popup menu */}
-          {edgeMenuPos && selectedEdgeId ? (() => {
-            const edgeDef = props.boardBundle.board.edges.find((e) => e.id === selectedEdgeId);
-            const dir = edgeDef?.arrowDirection ?? "right";
-            const style = edgeDef?.lineStyle ?? "solid";
-            return (
-              <div
-                className="edge-menu"
-                style={{
-                  position: "fixed",
-                  left: edgeMenuPos.x,
-                  top: edgeMenuPos.y - 10,
-                }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="edge-menu-section">
-                  <span className="edge-menu-label">Arrow</span>
-                  <div className="edge-menu-options">
-                    {(["left", "right", "both"] as const).map((d) => (
-                      <button
-                        key={d}
-                        type="button"
-                        className={`edge-menu-btn ${dir === d ? "active" : ""}`}
-                        onClick={() => {
-                          setLocalEdgeStyles((s) => ({ ...s, [selectedEdgeId]: { ...s[selectedEdgeId], arrowDirection: d } }));
-                          props.onUpdateEdge(selectedEdgeId, (e) => ({ ...e, arrowDirection: d }));
-                        }}
-                      >
-                        {d === "left" ? "←" : d === "right" ? "→" : "↔"}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="edge-menu-section">
-                  <span className="edge-menu-label">Style</span>
-                  <div className="edge-menu-options">
-                    {(["solid", "dashed"] as const).map((s) => (
-                      <button
-                        key={s}
-                        type="button"
-                        className={`edge-menu-btn ${style === s ? "active" : ""}`}
-                        onClick={() => {
-                          setLocalEdgeStyles((s2) => ({ ...s2, [selectedEdgeId]: { ...s2[selectedEdgeId], lineStyle: s } }));
-                          props.onUpdateEdge(selectedEdgeId, (e) => ({ ...e, lineStyle: s }));
-                        }}
-                      >
-                        {s === "solid" ? "─" : "┈"}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="edge-menu-section">
-                  <span className="edge-menu-label">Label</span>
-                  <input
-                    className="edge-menu-input"
-                    value={edgeDef?.label ?? ""}
-                    placeholder="Add label…"
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      props.onUpdateEdge(selectedEdgeId, (edge) => ({ ...edge, label: val || undefined }));
-                    }}
-                  />
-                </div>
-              </div>
-            );
-          })() : null}
 
           {rootCards.map((card) => {
             const displayPosition =
@@ -1226,6 +1154,26 @@ export function CanvasBoard(props: CanvasBoardProps) {
                     start: anchorPoint,
                     pointer: anchorPoint,
                   });
+                  // Immediately add window listeners so the preview line shows on the very first mousemove
+                  const onMove = (e: globalThis.MouseEvent) => {
+                    setConnectionPreview((current) => {
+                      if (!current) return null;
+                      const rect = canvasRef.current!.getBoundingClientRect();
+                      const pt = {
+                        x: (e.clientX - rect.left - props.boardBundle.board.viewport.x) / props.boardBundle.board.viewport.zoom,
+                        y: (e.clientY - rect.top - props.boardBundle.board.viewport.y) / props.boardBundle.board.viewport.zoom,
+                      };
+                      return { ...current, pointer: pt };
+                    });
+                  };
+                  const onUp = () => {
+                    window.removeEventListener("mousemove", onMove);
+                    window.removeEventListener("mouseup", onUp);
+                    props.onCancelConnection();
+                    setConnectionPreview(null);
+                  };
+                  window.addEventListener("mousemove", onMove);
+                  window.addEventListener("mouseup", onUp);
                 }}
                 onFinishConnection={(cardId) => {
                   props.onFinishConnection(cardId);
@@ -1284,6 +1232,74 @@ export function CanvasBoard(props: CanvasBoardProps) {
           })}
         </div>
       </div>
+      {/* Edge style popup menu */}
+      {edgeMenuPos && selectedEdgeId ? (() => {
+        const edgeDef = props.boardBundle.board.edges.find((e) => e.id === selectedEdgeId);
+        const dir = edgeDef?.arrowDirection ?? "right";
+        const style = edgeDef?.lineStyle ?? "solid";
+        return (
+          <div
+            className="edge-menu"
+            style={{
+              position: "fixed",
+              left: edgeMenuPos.x - 8,
+              top: edgeMenuPos.y - 10,
+              transform: "translate(-100%, 0)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="edge-menu-section">
+              <span className="edge-menu-label">Arrow</span>
+              <div className="edge-menu-options">
+                {(["left", "right", "both"] as const).map((d) => (
+                  <button
+                    key={d}
+                    type="button"
+                    className={`edge-menu-btn ${dir === d ? "active" : ""}`}
+                    onClick={() => {
+                      setLocalEdgeStyles((s) => ({ ...s, [selectedEdgeId]: { ...s[selectedEdgeId], arrowDirection: d } }));
+                      props.onUpdateEdge(selectedEdgeId, (e) => ({ ...e, arrowDirection: d }));
+                    }}
+                  >
+                    {d === "left" ? "←" : d === "right" ? "→" : "↔"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="edge-menu-section">
+              <span className="edge-menu-label">Style</span>
+              <div className="edge-menu-options">
+                {(["solid", "dashed"] as const).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    className={`edge-menu-btn ${style === s ? "active" : ""}`}
+                    onClick={() => {
+                      setLocalEdgeStyles((s2) => ({ ...s2, [selectedEdgeId]: { ...s2[selectedEdgeId], lineStyle: s } }));
+                      props.onUpdateEdge(selectedEdgeId, (e) => ({ ...e, lineStyle: s }));
+                    }}
+                  >
+                    {s === "solid" ? "─" : "┈"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="edge-menu-section">
+              <span className="edge-menu-label">Label</span>
+              <input
+                className="edge-menu-input"
+                value={edgeDef?.label ?? ""}
+                placeholder="Add label…"
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  props.onUpdateEdge(selectedEdgeId, (edge) => ({ ...edge, label: val || undefined }));
+                }}
+              />
+            </div>
+          </div>
+        );
+      })() : null}
       <div className="canvas-actions">
         <button type="button" className="canvas-action-btn" title="Fit all content" onClick={fitToView}>
           <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -1307,9 +1323,45 @@ function CardRenderer(props: CardRendererProps) {
   const isSelected = props.selectedCardIds.includes(card.id);
   const isEditable = props.activeCardId === card.id;
   const isBoardCard = card.type === "board";
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const [isHovered, setIsHovered] = useState(false);
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleMouseEnter = () => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
+    setIsHovered(true);
+  };
+
+  const handleMouseLeave = () => {
+    hoverTimeoutRef.current = setTimeout(() => {
+      setIsHovered(false);
+      hoverTimeoutRef.current = null;
+    }, 300);
+  };
+
+  // Auto-focus input when entering edit mode
+  useEffect(() => {
+    if (isEditable && !isBoardCard && cardRef.current) {
+      const el = cardRef.current.querySelector<HTMLElement>(".card-textarea, .todo-text-input, .link-fields input");
+      el?.focus();
+    }
+  }, [isEditable, isBoardCard]);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (hoverTimeoutRef.current) {
+        clearTimeout(hoverTimeoutRef.current);
+      }
+    };
+  }, []);
 
   return (
     <div
+      ref={cardRef}
       className={`canvas-card ${isSelected ? "selected" : ""} ${isBoardCard ? "type-board" : ""} ${props.isDragging ? "dragging" : ""} ${isBoardCard && card.cardColor ? "has-color" : ""}`}
       style={{
         left: props.displayPosition.x,
@@ -1317,6 +1369,8 @@ function CardRenderer(props: CardRendererProps) {
         ...(isBoardCard ? {} : { width: props.displaySize.width, height: props.displaySize.height }),
         ...(card.cardColor ? { backgroundColor: card.cardColor } : {}),
       }}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
       onDragOver={(event) => {
         if (card.type !== "board") {
           return;
@@ -1359,7 +1413,7 @@ function CardRenderer(props: CardRendererProps) {
         }
       }}
     >
-      {isSelected ? (
+      {isHovered && !isEditable ? (
         <div className="color-bar">
           {CARD_COLORS.map((colorDef) => (
             <button
@@ -1379,11 +1433,17 @@ function CardRenderer(props: CardRendererProps) {
           ))}
         </div>
       ) : null}
-      {!isBoardCard ? (
-        <div
-          className="connection-dot"
+      {isEditable && (card.type === "note" || card.type === "todo") ? (
+        <FormatBar
+          markdown={markdown}
+          onUpdateMarkdown={(nextMarkdown) => props.onUpdateMarkdown(card.id, nextMarkdown)}
+        />
+      ) : null}
+      <div className="canvas-card-content">
+        {!isBoardCard ? (
+          <div
+            className="connection-dot"
           onMouseDown={(event) => {
-            event.stopPropagation();
             props.onStartConnection(card.id, {
               x: props.displayPosition.x + props.displaySize.width - 10,
               y: props.displayPosition.y + 10,
@@ -1410,6 +1470,52 @@ function CardRenderer(props: CardRendererProps) {
           onMouseDown={(event) => props.onStartResize(card, event)}
         />
       ) : null}
+      </div>
+    </div>
+  );
+}
+
+function FormatBar(props: {
+  markdown: string;
+  onUpdateMarkdown: (markdown: string) => void;
+}) {
+  const { markdown, onUpdateMarkdown } = props;
+
+  const wrapSelection = (before: string, after: string) => {
+    const textarea = document.querySelector<HTMLTextAreaElement>(".card-textarea");
+    if (!textarea) {
+      return;
+    }
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const selected = markdown.slice(start, end);
+    const next = markdown.slice(0, start) + before + selected + after + markdown.slice(end);
+    onUpdateMarkdown(next);
+    requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(start + before.length, start + before.length + selected.length);
+    });
+  };
+
+  const insertLinePrefix = (prefix: string) => {
+    const textarea = document.querySelector<HTMLTextAreaElement>(".card-textarea");
+    if (!textarea) {
+      return;
+    }
+    const start = textarea.selectionStart;
+    const lineStart = markdown.lastIndexOf("\n", start - 1) + 1;
+    const next = markdown.slice(0, lineStart) + prefix + markdown.slice(lineStart);
+    onUpdateMarkdown(next);
+  };
+
+  return (
+    <div className="color-bar" style={{ top: "-34px", gap: "2px" }}>
+      <button type="button" className="format-btn" title="Bold" onClick={() => wrapSelection("**", "**")}><strong>B</strong></button>
+      <button type="button" className="format-btn" title="Italic" onClick={() => wrapSelection("*", "*")}><em>I</em></button>
+      <button type="button" className="format-btn" title="Strikethrough" onClick={() => wrapSelection("~~", "~~")}><s>S</s></button>
+      <button type="button" className="format-btn" title="Underline" onClick={() => wrapSelection("++", "++")}><u>U</u></button>
+      <button type="button" className="format-btn" title="Bullet list" onClick={() => insertLinePrefix("- ")}>•</button>
+      <button type="button" className="format-btn" title="Numbered list" onClick={() => insertLinePrefix("1. ")}>1.</button>
     </div>
   );
 }
