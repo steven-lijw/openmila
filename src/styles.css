@@ -469,6 +469,63 @@ button {
   outline-offset: 1px;
 }
 
+/* Edge style popup menu */
+.edge-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  z-index: 100;
+  min-width: 140px;
+  transform: translate(-50%, -100%);
+}
+
+.edge-menu-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.edge-menu-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  min-width: 36px;
+}
+
+.edge-menu-options {
+  display: flex;
+  gap: 4px;
+}
+
+.edge-menu-btn {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: transparent;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.edge-menu-btn:hover {
+  background: var(--color-surface-offset);
+}
+
+.edge-menu-btn.active {
+  background: var(--color-primary);
+  color: #fff;
+  border-color: var(--color-primary);
+}
+
 .card-textarea,
 .link-fields input,
 .link-fields textarea,

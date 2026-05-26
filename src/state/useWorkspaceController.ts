@@ -559,6 +559,18 @@ export function useWorkspaceController() {
     updateBoardBundle(latestState.currentBoardId, replaceBoardBundle(bundle, removeEdge(bundle.board, edgeId)));
   }, [updateBoardBundle]);
 
+  const updateEdge = useCallback((edgeId: string, updater: (edge: Edge) => Edge) => {
+    const latestState = stateRef.current;
+    if (!latestState.currentBoardId) {
+      return;
+    }
+    const bundle = getBoard(latestState, latestState.currentBoardId);
+    updateBoardBundle(latestState.currentBoardId, replaceBoardBundle(bundle, {
+      ...bundle.board,
+      edges: bundle.board.edges.map((e) => (e.id === edgeId ? updater(e) : e)),
+    }));
+  }, [updateBoardBundle]);
+
   const openChildBoard = useCallback((childBoardId: string) => {
     setState((current) => {
       if (!current.workspace) {
@@ -702,6 +714,7 @@ export function useWorkspaceController() {
     cancelConnection,
     finishConnection,
     deleteEdge,
+    updateEdge,
     undo,
     openChildBoard,
     goToParentBoard,

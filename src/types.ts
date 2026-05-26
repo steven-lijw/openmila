@@ -88,6 +88,8 @@ export interface Edge {
   id: string;
   fromCardId: string;
   toCardId: string;
+  arrowDirection?: "left" | "right" | "both";
+  lineStyle?: "solid" | "dashed";
 }
 
 export interface BoardFile {

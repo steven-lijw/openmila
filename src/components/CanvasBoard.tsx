@@ -26,6 +26,7 @@ interface CanvasBoardProps {
   onCancelConnection: () => void;
   onFinishConnection: (cardId: string) => void;
   onOpenBoard: (childBoardId: string) => void;
+  onUpdateEdge: (edgeId: string, updater: (edge: import("../types").Edge) => import("../types").Edge) => void;
   onDeleteEdge: (edgeId: string) => void;
   onViewportChange: (viewport: { x: number; y: number; zoom: number }) => void;
   onDropExternalFiles: (files: File[], position: Point) => void | Promise<void>;
@@ -424,6 +425,8 @@ export function CanvasBoard(props: CanvasBoardProps) {
   const [committedPositions, setCommittedPositions] = useState<Record<string, Point>>({});
   const [resizingCard, setResizingCard] = useState<ResizingCardState | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [edgeMenuPos, setEdgeMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const [localEdgeStyles, setLocalEdgeStyles] = useState<Record<string, { arrowDirection?: string; lineStyle?: string }>>({});
 
   const getMinSize = (card: CardMeta | undefined) => {
     if (!card) {
@@ -465,6 +468,35 @@ export function CanvasBoard(props: CanvasBoardProps) {
     return {
       x: position.x + size.width / 2,
       y: position.y + size.height / 2,
+    };
+  };
+
+  // Returns where a line from (fromX, fromY) to the card center hits the card's edge
+  const getEdgeEndpoint = (card: CardMeta, cardPosition: Point, fromX: number, fromY: number) => {
+    const center = card.type === "board"
+      ? { x: cardPosition.x + 50, y: cardPosition.y + 20 }
+      : { x: cardPosition.x + getDisplaySize(card).width / 2, y: cardPosition.y + getDisplaySize(card).height / 2 };
+    const size = getDisplaySize(card);
+
+    const dx = center.x - fromX;
+    const dy = center.y - fromY;
+    if (Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001) return center;
+
+    // Determine which edge the line enters first using a stable clamp approach
+    const halfW = size.width / 2;
+    const halfH = size.height / 2;
+
+    // Extend the line from center backward to find where it hits the bounding box
+    // Line: P = center - t * (dx, dy), find smallest t > 0 where P is on the box edge
+    let t = Infinity;
+    if (dx > 0) t = Math.min(t, halfW / dx);   // left edge
+    if (dx < 0) t = Math.min(t, -halfW / dx);  // right edge
+    if (dy > 0) t = Math.min(t, halfH / dy);   // top edge
+    if (dy < 0) t = Math.min(t, -halfH / dy);  // bottom edge
+
+    return {
+      x: center.x - dx * t,
+      y: center.y - dy * t,
     };
   };
 
@@ -679,7 +711,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
   }, [props]);
 
   const edges = useMemo(() => {
-    const result = props.boardBundle.board.edges
+    return props.boardBundle.board.edges
       .map((edge) => {
         const from = rootCardMap[edge.fromCardId];
         const to = rootCardMap[edge.toCardId];
@@ -697,6 +729,17 @@ export function CanvasBoard(props: CanvasBoardProps) {
         const toCenter = to.type === "board"
           ? getEdgeCenter(to, toPosition)
           : { x: toPosition.x + toSize.width / 2, y: toPosition.y + toSize.height / 2 };
+        const fromEndpoint = getEdgeEndpoint(from, fromPosition, toCenter.x, toCenter.y);
+        const toEndpoint = getEdgeEndpoint(to, toPosition, fromCenter.x, fromCenter.y);
+        // Arrow positions: extend outside card edges
+        const toDx = toCenter.x - toEndpoint.x;
+        const toDy = toCenter.y - toEndpoint.y;
+        const toDist = Math.sqrt(toDx * toDx + toDy * toDy) || 1;
+        const fromDx = fromCenter.x - fromEndpoint.x;
+        const fromDy = fromCenter.y - fromEndpoint.y;
+        const fromDist = Math.sqrt(fromDx * fromDx + fromDy * fromDy) || 1;
+        const dir = localEdgeStyles[edge.id]?.arrowDirection ?? edge.arrowDirection ?? "right";
+        const style = localEdgeStyles[edge.id]?.lineStyle ?? edge.lineStyle ?? "solid";
 
         return {
           id: edge.id,
@@ -704,6 +747,17 @@ export function CanvasBoard(props: CanvasBoardProps) {
           y1: fromCenter.y,
           x2: toCenter.x,
           y2: toCenter.y,
+          ax: toEndpoint.x,
+          ay: toEndpoint.y,
+          arrowFromX: toEndpoint.x - (toDx / toDist) * 10,
+          arrowFromY: toEndpoint.y - (toDy / toDist) * 10,
+          // Source side arrow
+          fromAx: fromEndpoint.x,
+          fromAy: fromEndpoint.y,
+          arrowFromSrcX: fromEndpoint.x - (fromDx / fromDist) * 10,
+          arrowFromSrcY: fromEndpoint.y - (fromDy / fromDist) * 10,
+          arrowDirection: dir,
+          lineStyle: style,
         };
       })
       .filter(Boolean);
@@ -715,11 +769,21 @@ export function CanvasBoard(props: CanvasBoardProps) {
         y1: connectionPreview.start.y,
         x2: connectionPreview.pointer.x,
         y2: connectionPreview.pointer.y,
+        ax: connectionPreview.pointer.x,
+        ay: connectionPreview.pointer.y,
+        arrowFromX: connectionPreview.pointer.x,
+        arrowFromY: connectionPreview.pointer.y,
+        fromAx: connectionPreview.pointer.x,
+        fromAy: connectionPreview.pointer.y,
+        arrowFromSrcX: connectionPreview.pointer.x,
+        arrowFromSrcY: connectionPreview.pointer.y,
+        arrowDirection: "right" as const,
+        lineStyle: "solid" as const,
       });
     }
 
     return result;
-  }, [committedPositions, connectionPreview, draggingCard, props.boardBundle.board.edges, resizingCard, rootCardMap]);
+  }, [committedPositions, connectionPreview, draggingCard, localEdgeStyles, props.boardBundle, props.boardBundle.board.edges, resizingCard, rootCardMap]);
 
   const viewportStyle = {
     transform: `translate(${props.boardBundle.board.viewport.x}px, ${props.boardBundle.board.viewport.y}px) scale(${props.boardBundle.board.viewport.zoom})`,
@@ -770,11 +834,12 @@ export function CanvasBoard(props: CanvasBoardProps) {
           if (!target.closest(".canvas-card") && !target.closest(".edge-layer line")) {
             props.onClearSelection();
             setSelectedEdgeId(null);
+            setEdgeMenuPos(null);
           }
         }}
         onMouseDown={(event) => {
           const target = event.target as HTMLElement;
-          if (target.closest(".canvas-card") || target.closest(".edge-layer line")) {
+          if (target.closest(".canvas-card") || target.closest(".edge-layer line") || target.closest(".edge-menu")) {
             return;
           }
 
@@ -789,6 +854,8 @@ export function CanvasBoard(props: CanvasBoardProps) {
 
           const startPoint = screenToCanvas(event.clientX, event.clientY);
           props.onClearSelection();
+          setSelectedEdgeId(null);
+          setEdgeMenuPos(null);
           setSelectionBox({
             start: startPoint,
             current: startPoint,
@@ -822,6 +889,14 @@ export function CanvasBoard(props: CanvasBoardProps) {
           onDrop={handleCanvasDrop}
         >
           <svg className="edge-layer">
+            <defs>
+              <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                <polygon points="0 0, 8 3, 0 6" fill="#7f776d" />
+              </marker>
+              <marker id="arrowhead-selected" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                <polygon points="0 0, 8 3, 0 6" fill="#4a6cf7" />
+              </marker>
+            </defs>
             {edges.map((edge) =>
               edge ? (
                 <g key={edge.id}>
@@ -838,6 +913,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
                       e.stopPropagation();
                       if (edge.id !== "preview-edge") {
                         setSelectedEdgeId(edge.id);
+                        setEdgeMenuPos({ x: e.clientX, y: e.clientY });
                         props.onClearSelection();
                       }
                     }}
@@ -845,13 +921,39 @@ export function CanvasBoard(props: CanvasBoardProps) {
                   <line
                     x1={edge.x1}
                     y1={edge.y1}
-                    x2={edge.x2}
-                    y2={edge.y2}
+                    x2={edge.ax ?? edge.x2}
+                    y2={edge.ay ?? edge.y2}
                     stroke={selectedEdgeId === edge.id ? "#4a6cf7" : "#7f776d"}
                     strokeWidth={edge.id === "preview-edge" ? "3" : selectedEdgeId === edge.id ? "3" : "2"}
-                    strokeDasharray={edge.id === "preview-edge" ? "6 4" : undefined}
+                    strokeDasharray={edge.id === "preview-edge" ? "6 4" : edge.lineStyle === "dashed" ? "6 4" : undefined}
                     pointerEvents="none"
                   />
+                  {/* Right arrow: at target card edge */}
+                  {(edge.arrowDirection === "right" || edge.arrowDirection === "both") && edge.id !== "preview-edge" ? (
+                    <line
+                      x1={edge.arrowFromX}
+                      y1={edge.arrowFromY}
+                      x2={edge.ax}
+                      y2={edge.ay}
+                      stroke={selectedEdgeId === edge.id ? "#4a6cf7" : "#7f776d"}
+                      strokeWidth={selectedEdgeId === edge.id ? "3" : "2"}
+                      markerEnd={selectedEdgeId === edge.id ? "url(#arrowhead-selected)" : "url(#arrowhead)"}
+                      pointerEvents="none"
+                    />
+                  ) : null}
+                  {/* Left arrow: at source card edge */}
+                  {(edge.arrowDirection === "left" || edge.arrowDirection === "both") && edge.id !== "preview-edge" ? (
+                    <line
+                      x1={edge.arrowFromSrcX}
+                      y1={edge.arrowFromSrcY}
+                      x2={edge.fromAx}
+                      y2={edge.fromAy}
+                      stroke={selectedEdgeId === edge.id ? "#4a6cf7" : "#7f776d"}
+                      strokeWidth={selectedEdgeId === edge.id ? "3" : "2"}
+                      markerEnd={selectedEdgeId === edge.id ? "url(#arrowhead-selected)" : "url(#arrowhead)"}
+                      pointerEvents="none"
+                    />
+                  ) : null}
                 </g>
               ) : null,
             )}
@@ -868,6 +970,61 @@ export function CanvasBoard(props: CanvasBoardProps) {
               }}
             />
           ) : null}
+
+          {/* Edge style popup menu */}
+          {edgeMenuPos && selectedEdgeId ? (() => {
+            const edgeDef = props.boardBundle.board.edges.find((e) => e.id === selectedEdgeId);
+            const dir = edgeDef?.arrowDirection ?? "right";
+            const style = edgeDef?.lineStyle ?? "solid";
+            return (
+              <div
+                className="edge-menu"
+                style={{
+                  position: "fixed",
+                  left: edgeMenuPos.x,
+                  top: edgeMenuPos.y - 10,
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="edge-menu-section">
+                  <span className="edge-menu-label">Arrow</span>
+                  <div className="edge-menu-options">
+                    {(["left", "right", "both"] as const).map((d) => (
+                      <button
+                        key={d}
+                        type="button"
+                        className={`edge-menu-btn ${dir === d ? "active" : ""}`}
+                        onClick={() => {
+                          setLocalEdgeStyles((s) => ({ ...s, [selectedEdgeId]: { ...s[selectedEdgeId], arrowDirection: d } }));
+                          props.onUpdateEdge(selectedEdgeId, (e) => ({ ...e, arrowDirection: d }));
+                        }}
+                      >
+                        {d === "left" ? "←" : d === "right" ? "→" : "↔"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="edge-menu-section">
+                  <span className="edge-menu-label">Style</span>
+                  <div className="edge-menu-options">
+                    {(["solid", "dashed"] as const).map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        className={`edge-menu-btn ${style === s ? "active" : ""}`}
+                        onClick={() => {
+                          setLocalEdgeStyles((s2) => ({ ...s2, [selectedEdgeId]: { ...s2[selectedEdgeId], lineStyle: s } }));
+                          props.onUpdateEdge(selectedEdgeId, (e) => ({ ...e, lineStyle: s }));
+                        }}
+                      >
+                        {s === "solid" ? "─" : "┈"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            );
+          })() : null}
 
           {rootCards.map((card) => {
             const displayPosition =

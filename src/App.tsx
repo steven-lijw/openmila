@@ -136,6 +136,7 @@ export default function App() {
             onCancelConnection={controller.cancelConnection}
             onFinishConnection={(cardId) => controller.finishConnection(controller.currentBoard!.board.id, cardId)}
             onDeleteEdge={(edgeId) => controller.deleteEdge(edgeId)}
+            onUpdateEdge={(edgeId, updater) => controller.updateEdge(edgeId, updater)}
             onOpenBoard={controller.openChildBoard}
             onViewportChange={(viewport) => controller.setViewport(controller.currentBoard!.board.id, viewport)}
             onDropExternalFiles={(files, position) =>
