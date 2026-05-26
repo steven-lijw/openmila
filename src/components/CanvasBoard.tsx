@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, MouseEvent } from "react";
 import { formatFileSize, getFilePreviewMeta } from "../core/filePreview";
+import { createId } from "../core/ids";
 import { getLinkPreview } from "../core/linkPreview";
 import { parseTodoMarkdown, stringifyTodoMarkdown } from "../core/todoMarkdown";
 import type { BoardBundle, CardMeta, DragCardPayload, DragToolPayload, Point } from "../types";
@@ -16,6 +17,7 @@ interface CanvasBoardProps {
   onClearSelection: () => void;
   onUpdateCard: (cardId: string, updater: (card: CardMeta) => CardMeta) => void;
   onUpdateMarkdown: (cardId: string, markdown: string) => void;
+  onBringCardsToFront: (cardIds: string[]) => void;
   onMoveToBoard: (payload: DragCardPayload, boardId: string, position: Point) => void;
   onStartConnection: (cardId: string) => void;
   onCancelConnection: () => void;
@@ -110,7 +112,12 @@ function renderEditableContent(input: {
 
   if (card.type === "note") {
     return isEditable ? (
-      <textarea className="card-textarea" value={markdown} onChange={(event) => onUpdateMarkdown(event.target.value)} />
+      <NoteEditor
+        card={card}
+        markdown={markdown}
+        onUpdateMarkdown={onUpdateMarkdown}
+        onUpdateCard={onUpdateCard}
+      />
     ) : (
       <div className="card-preview">{markdown || "Empty note"}</div>
     );
@@ -118,34 +125,7 @@ function renderEditableContent(input: {
 
   if (card.type === "todo") {
     const items = parseTodoMarkdown(markdown);
-    return (
-      <div className="todo-list">
-        {items.map((item) => (
-          <label key={item.id} className="todo-item">
-            <input
-              type="checkbox"
-              checked={item.checked}
-              onChange={(event) => {
-                const nextItems = items.map((entry) =>
-                  entry.id === item.id ? { ...entry, checked: event.target.checked } : entry,
-                );
-                onUpdateMarkdown(stringifyTodoMarkdown(nextItems));
-              }}
-            />
-            <input
-              className="todo-text-input"
-              value={item.text}
-              onChange={(event) => {
-                const nextItems = items.map((entry) =>
-                  entry.id === item.id ? { ...entry, text: event.target.value } : entry,
-                );
-                onUpdateMarkdown(stringifyTodoMarkdown(nextItems));
-              }}
-            />
-          </label>
-        ))}
-      </div>
-    );
+    return <TodoList card={card} items={items} onUpdateMarkdown={onUpdateMarkdown} onUpdateCard={onUpdateCard} />;
   }
 
   if (card.type === "link") {
@@ -234,6 +214,156 @@ function renderEditableContent(input: {
   return <div className="removed-card">Column has been removed</div>;
 }
 
+function NoteEditor(props: {
+  card: CardMeta;
+  markdown: string;
+  onUpdateMarkdown: (markdown: string) => void;
+  onUpdateCard: (updater: (card: CardMeta) => CardMeta) => void;
+}) {
+  const { card, markdown, onUpdateMarkdown, onUpdateCard } = props;
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      return;
+    }
+    const contentHeight = textarea.scrollHeight;
+    const padding = 24;
+    const desiredHeight = Math.ceil(contentHeight + padding);
+    if (desiredHeight <= card.size.height) {
+      return;
+    }
+    onUpdateCard((currentCard) => ({
+      ...currentCard,
+      size: {
+        ...currentCard.size,
+        height: Math.max(currentCard.size.height, desiredHeight),
+      },
+    }));
+  }, [card.size.height, markdown, onUpdateCard]);
+
+  return (
+    <textarea
+      ref={textareaRef}
+      className="card-textarea"
+      value={markdown}
+      onChange={(event) => onUpdateMarkdown(event.target.value)}
+    />
+  );
+}
+
+function TodoList(props: {
+  card: CardMeta;
+  items: ReturnType<typeof parseTodoMarkdown>;
+  onUpdateMarkdown: (markdown: string) => void;
+  onUpdateCard: (updater: (card: CardMeta) => CardMeta) => void;
+}) {
+  const { card, items, onUpdateMarkdown, onUpdateCard } = props;
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const pendingFocusIndexRef = useRef<number | null>(null);
+  const [focusNonce, setFocusNonce] = useState(0);
+  const focusRetryRef = useRef(0);
+
+  const requestFocus = (index: number) => {
+    pendingFocusIndexRef.current = index;
+    focusRetryRef.current = 0;
+    setFocusNonce((current) => current + 1);
+  };
+
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) {
+      return;
+    }
+    const contentHeight = list.scrollHeight;
+    const padding = 24;
+    const desiredHeight = Math.ceil(contentHeight + padding);
+    if (desiredHeight <= card.size.height) {
+      return;
+    }
+    onUpdateCard((currentCard) => ({
+      ...currentCard,
+      size: {
+        ...currentCard.size,
+        height: Math.max(currentCard.size.height, desiredHeight),
+      },
+    }));
+  }, [card.size.height, items, onUpdateCard]);
+
+  useLayoutEffect(() => {
+    const pendingIndex = pendingFocusIndexRef.current;
+    if (pendingIndex === null) {
+      return;
+    }
+    const list = listRef.current;
+    if (!list) {
+      return;
+    }
+    const inputs = list.querySelectorAll<HTMLInputElement>(".todo-text-input");
+    const target = inputs[pendingIndex];
+    if (target) {
+      target.focus();
+      pendingFocusIndexRef.current = null;
+      focusRetryRef.current = 0;
+      return;
+    }
+
+    if (focusRetryRef.current < 2) {
+      focusRetryRef.current += 1;
+      requestAnimationFrame(() => setFocusNonce((current) => current + 1));
+    }
+  }, [focusNonce, items.length, card.size.height]);
+
+  return (
+    <div ref={listRef} className="todo-list">
+      {items.map((item, index) => (
+        <label key={item.id} className="todo-item">
+          <input
+            type="checkbox"
+            checked={item.checked}
+            onChange={(event) => {
+              const nextItems = items.map((entry) =>
+                entry.id === item.id ? { ...entry, checked: event.target.checked } : entry,
+              );
+              onUpdateMarkdown(stringifyTodoMarkdown(nextItems));
+            }}
+          />
+          <input
+            className="todo-text-input"
+            value={item.text}
+            onChange={(event) => {
+              const nextItems = items.map((entry) =>
+                entry.id === item.id ? { ...entry, text: event.target.value } : entry,
+              );
+              onUpdateMarkdown(stringifyTodoMarkdown(nextItems));
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                const nextItems = [...items];
+                nextItems.splice(index + 1, 0, { id: createId("todo"), checked: false, text: "" });
+                requestFocus(index + 1);
+                onUpdateMarkdown(stringifyTodoMarkdown(nextItems));
+                return;
+              }
+
+              if ((event.key === "Delete" || event.key === "Backspace") && item.text.trim() === "") {
+                event.preventDefault();
+                const nextItems = items.filter((entry) => entry.id !== item.id);
+                const normalizedItems =
+                  nextItems.length === 0 ? [{ id: createId("todo"), checked: false, text: "" }] : nextItems;
+                requestFocus(Math.max(index - 1, 0));
+                onUpdateMarkdown(stringifyTodoMarkdown(normalizedItems));
+              }
+            }}
+          />
+        </label>
+      ))}
+    </div>
+  );
+}
+
 export function CanvasBoard(props: CanvasBoardProps) {
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const canvasInnerRef = useRef<HTMLDivElement | null>(null);
@@ -246,6 +376,27 @@ export function CanvasBoard(props: CanvasBoardProps) {
   const [selectionBox, setSelectionBox] = useState<SelectionBoxState | null>(null);
   const [committedPositions, setCommittedPositions] = useState<Record<string, Point>>({});
   const [resizingCard, setResizingCard] = useState<ResizingCardState | null>(null);
+
+  const getMinSize = (card: CardMeta | undefined) => {
+    if (!card) {
+      return { width: 160, height: 120 };
+    }
+    switch (card.type) {
+      case "note":
+      case "todo":
+      case "link":
+      case "board":
+        return { width: 304, height: 64 };
+      case "image":
+        return { width: 280, height: 220 };
+      case "file":
+        return { width: 320, height: 260 };
+      case "column":
+        return { width: 300, height: 360 };
+      default:
+        return { width: 160, height: 120 };
+    }
+  };
 
   const getDisplaySize = (card: CardMeta) => {
     if (resizingCard?.cardId === card.id) {
@@ -339,8 +490,9 @@ export function CanvasBoard(props: CanvasBoardProps) {
       }
 
       if (resizingCard) {
-        const nextWidth = Math.max(160, resizingCard.startSize.width + (point.x - resizingCard.startPointer.x));
-        const nextHeight = Math.max(120, resizingCard.startSize.height + (point.y - resizingCard.startPointer.y));
+        const minSize = getMinSize(rootCardMap[resizingCard.cardId]);
+        const nextWidth = Math.max(minSize.width, resizingCard.startSize.width + (point.x - resizingCard.startPointer.x));
+        const nextHeight = Math.max(minSize.height, resizingCard.startSize.height + (point.y - resizingCard.startPointer.y));
         setResizingCard((current) =>
           current ? { ...current, size: { width: nextWidth, height: nextHeight } } : null,
         );
@@ -353,6 +505,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
         for (const [cardId, position] of Object.entries(draggingCard.positions)) {
           props.onUpdateCard(cardId, (card) => ({ ...card, position }));
         }
+        props.onBringCardsToFront(draggingCard.cardIds);
       }
 
       if (selectionBox) {
@@ -514,7 +667,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
   return (
     <div className="canvas-shell">
       <div
-        className="canvas-board"
+        className={`canvas-board ${draggingCard ? "is-dragging" : ""}`}
         ref={canvasRef}
         onDragOver={handleCanvasDragOver}
         onDrop={handleCanvasDrop}
@@ -655,6 +808,8 @@ export function CanvasBoard(props: CanvasBoardProps) {
                   if (!shouldKeepSelection || props.selectedCardIds.length <= 1) {
                     props.onSelectCard(cardMeta.id, event.shiftKey);
                   }
+
+                  props.onBringCardsToFront(movableIds);
 
                   setDraggingCard({
                     cardIds: movableIds,

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getFileExtension } from "../core/filePreview";
-import { addCardToBoard, createCardCreationResult, getBoard, getCard, moveCardToRoot, patchCard, removeCardFromBoard, replaceBoardBundle, setBoardTitle, setCardDocument, updateEdgeList } from "../core/boardOperations";
+import { addCardToBoard, createCardCreationResult, getBoard, getCard, moveCardToRoot, moveCardsToFront, patchCard, removeCardFromBoard, replaceBoardBundle, setBoardTitle, setCardDocument, updateEdgeList } from "../core/boardOperations";
 import { createId } from "../core/ids";
 import { BrowserFsVault } from "../storage/fsVault";
 import type { AppState, BoardBundle, CardMeta, CardType, DragCardPayload, Edge, Point } from "../types";
@@ -291,15 +291,21 @@ export function useWorkspaceController() {
 
   const selectCard = useCallback((cardId: string, multi: boolean) => {
     setState((current) => {
+      const isAlreadySelected = current.selectedCardIds.includes(cardId);
       const selectedCardIds = multi
-        ? current.selectedCardIds.includes(cardId)
+        ? isAlreadySelected
           ? current.selectedCardIds.filter((id) => id !== cardId)
           : [...current.selectedCardIds, cardId]
         : [cardId];
+      const activeCardId = multi
+        ? null
+        : isAlreadySelected
+          ? cardId
+          : null;
       return {
         ...current,
         selectedCardIds,
-        activeCardId: cardId,
+        activeCardId,
       };
     });
   }, []);
@@ -321,6 +327,14 @@ export function useWorkspaceController() {
   const updateCardMarkdown = useCallback((boardId: string, cardId: string, markdown: string) => {
     const bundle = getBoard(stateRef.current, boardId);
     updateBoardBundle(boardId, setCardDocument(bundle, cardId, markdown));
+  }, [updateBoardBundle]);
+
+  const bringCardsToFront = useCallback((boardId: string, cardIds: string[]) => {
+    if (cardIds.length === 0) {
+      return;
+    }
+    const bundle = getBoard(stateRef.current, boardId);
+    updateBoardBundle(boardId, replaceBoardBundle(bundle, moveCardsToFront(bundle.board, cardIds)));
   }, [updateBoardBundle]);
 
   const moveCardByDrag = useCallback((payload: DragCardPayload, destination: { boardId: string; position?: Point }) => {
@@ -564,6 +578,7 @@ export function useWorkspaceController() {
     clearSelection,
     updateCard,
     updateCardMarkdown,
+    bringCardsToFront,
     moveCardByDrag,
     deleteSelectedCards,
     startConnection,

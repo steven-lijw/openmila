@@ -239,3 +239,16 @@ export function updateEdgeList(board: BoardFile, edge: Edge): BoardFile {
     edges: [...board.edges, edge],
   };
 }
+
+export function moveCardsToFront(board: BoardFile, cardIds: string[]): BoardFile {
+  if (cardIds.length === 0) {
+    return board;
+  }
+  const cardIdSet = new Set(cardIds);
+  const remainingCards = board.cards.filter((card) => !cardIdSet.has(card.id));
+  const movedCards = board.cards.filter((card) => cardIdSet.has(card.id));
+  return {
+    ...board,
+    cards: [...remainingCards, ...movedCards],
+  };
+}

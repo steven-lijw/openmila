@@ -295,6 +295,30 @@ button {
   text-overflow: ellipsis;
 }
 
+.breadcrumb-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.breadcrumb-link {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.breadcrumb-link:disabled {
+  cursor: default;
+  color: #6b6f75;
+}
+
+.breadcrumb-separator {
+  color: #8b9096;
+}
+
 .canvas-shell {
   min-height: 0;
   overflow: hidden;
@@ -346,6 +370,7 @@ button {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  contain: layout paint;
 }
 
 .connection-dot {
@@ -495,6 +520,10 @@ button {
   border: 1px solid var(--color-border);
   border-radius: 0;
   background: #fff;
+}
+
+.canvas-board.is-dragging .file-preview-frame {
+  visibility: hidden;
 }
 
 .file-preview-audio {

@@ -14,7 +14,7 @@ export default function App() {
       return [];
     }
 
-    const path: string[] = [];
+    const path: { id: string; title: string }[] = [];
     let boardId: string | null = controller.currentBoard.board.id;
 
     while (boardId) {
@@ -22,7 +22,7 @@ export default function App() {
       if (!boardItem) {
         break;
       }
-      path.unshift(boardItem.title);
+      path.unshift({ id: boardItem.id, title: boardItem.title });
       boardId = boardItem.parentBoardId;
     }
 
@@ -39,7 +39,24 @@ export default function App() {
             <div className="breadcrumb-bar">
               <span className="breadcrumb-logo">M</span>
               <span className="breadcrumb">
-                {boardPath.length > 0 ? boardPath.join(" / ") : "Workspace"}
+                {boardPath.length > 0
+                  ? boardPath.map((item, index) => {
+                      const isLast = index === boardPath.length - 1;
+                      return (
+                        <span key={item.id} className="breadcrumb-item">
+                          <button
+                            type="button"
+                            className="breadcrumb-link"
+                            onClick={() => controller.openChildBoard(item.id)}
+                            disabled={isLast}
+                          >
+                            {item.title}
+                          </button>
+                          {!isLast ? <span className="breadcrumb-separator">/</span> : null}
+                        </span>
+                      );
+                    })
+                  : "Workspace"}
               </span>
             </div>
           </div>
@@ -102,6 +119,9 @@ export default function App() {
             onUpdateCard={(cardId, updater) => controller.updateCard(controller.currentBoard!.board.id, cardId, updater)}
             onUpdateMarkdown={(cardId, markdown) =>
               controller.updateCardMarkdown(controller.currentBoard!.board.id, cardId, markdown)
+            }
+            onBringCardsToFront={(cardIds) =>
+              controller.bringCardsToFront(controller.currentBoard!.board.id, cardIds)
             }
             onMoveToBoard={(payload, boardId, position) =>
               controller.moveCardByDrag(payload, {
