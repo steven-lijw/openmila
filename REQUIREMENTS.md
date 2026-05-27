@@ -64,7 +64,7 @@ Top-level vault structure:
 
 - `workspace.json`
 - `boards/`
-- `assets/`
+- `.trash/` (internal, for undo)
 
 ### 4.2 Workspace structure
 
@@ -72,8 +72,8 @@ Top-level vault structure:
 
 - schema version
 - root board id
+- root board path
 - recent board id
-- board index list
 
 Expected shape:
 
@@ -81,23 +81,28 @@ Expected shape:
 {
   "version": 1,
   "rootBoardId": "board_xxx",
-  "recentBoardId": "board_xxx",
-  "boards": []
+  "rootBoardPath": "boards/root-board",
+  "recentBoardId": "board_xxx"
 }
 ```
 
 ### 4.3 Board structure
 
-Each board should live under:
+Each board should live under its parent board folder:
 
 ```text
 boards/<board-slug>/
+  board.json
+  cards/
+  assets/
+  boards/
 ```
 
-Inside each board folder:
+Nested boards live under their parent:
 
-- `board.json`
-- `cards/`
+```text
+boards/<root>/boards/<child>/boards/<grandchild>/
+```
 
 ### 4.4 Card persistence rules
 
@@ -113,7 +118,7 @@ For `Image`, `Link`, `Column`, and `Board` cards:
 
 For images:
 
-- source file stored under `assets/`
+- source file stored under the current board's `assets/` directory
 
 ## 5. Core UX Direction
 

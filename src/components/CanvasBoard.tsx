@@ -12,7 +12,7 @@ interface CanvasBoardProps {
   selectedCardIds: string[];
   activeCardId: string | null;
   connectFromCardId: string | null;
-  readAssetUrl: (assetPath: string) => Promise<string>;
+  readAssetUrl: (boardId: string, assetPath: string) => Promise<string>;
   onCanvasCreate: (toolType: DragToolPayload["toolType"], position: Point) => void;
   onSelectCard: (cardId: string, multi: boolean) => void;
   onClearSelection: () => void;
@@ -561,11 +561,11 @@ export function CanvasBoard(props: CanvasBoardProps) {
       if ((card.type !== "image" && card.type !== "file") || !card.assetPath || assetUrls[card.id]) {
         continue;
       }
-      void props.readAssetUrl(card.assetPath).then((url) => {
+      void props.readAssetUrl(props.boardBundle.board.id, card.assetPath).then((url) => {
         setAssetUrls((current) => ({ ...current, [card.id]: url }));
       });
     }
-  }, [assetUrls, props.boardBundle.board.cards, props.readAssetUrl]);
+  }, [assetUrls, props.boardBundle.board.cards, props.boardBundle.board.id, props.readAssetUrl]);
 
   useEffect(() => {
     setAssetUrls((current) => {

@@ -10,7 +10,7 @@ export default function App() {
       ? "Unsaved"
       : "Saved";
   const boardPath = (() => {
-    if (!controller.currentBoard || !controller.state.workspace) {
+    if (!controller.currentBoard) {
       return [];
     }
 
@@ -18,12 +18,12 @@ export default function App() {
     let boardId: string | null = controller.currentBoard.board.id;
 
     while (boardId) {
-      const boardItem = controller.state.workspace.boards.find((item) => item.id === boardId);
-      if (!boardItem) {
+      const bundle = controller.state.boards[boardId];
+      if (!bundle) {
         break;
       }
-      path.unshift({ id: boardItem.id, title: boardItem.title });
-      boardId = boardItem.parentBoardId;
+      path.unshift({ id: bundle.board.id, title: bundle.board.title });
+      boardId = bundle.board.parentBoardId;
     }
 
     return path;

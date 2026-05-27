@@ -3,7 +3,6 @@ import type {
   BoardBundle,
   BoardCard,
   BoardFile,
-  BoardIndexItem,
   CardMeta,
   CardType,
   ColumnCard,
@@ -52,15 +51,8 @@ export function createWorkspace(): { workspace: WorkspaceFile; rootBoard: BoardB
     workspace: {
       version: 1,
       rootBoardId,
+      rootBoardPath: `boards/${rootBoardSlug}`,
       recentBoardId: rootBoardId,
-      boards: [
-        {
-          id: rootBoardId,
-          slug: rootBoardSlug,
-          title: "Main Board",
-          parentBoardId: null,
-        },
-      ],
     },
     rootBoard,
   };
@@ -170,11 +162,3 @@ export function createCardMeta(type: CardType, position: Point): CardMeta {
   return boardCard;
 }
 
-export function createBoardIndexItem(board: BoardFile): BoardIndexItem {
-  return {
-    id: board.id,
-    slug: board.slug,
-    title: board.title,
-    parentBoardId: board.parentBoardId,
-  };
-}

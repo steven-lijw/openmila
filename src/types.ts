@@ -19,15 +19,8 @@ export interface ViewportState {
 export interface WorkspaceFile {
   version: number;
   rootBoardId: string;
+  rootBoardPath: string;
   recentBoardId: string;
-  boards: BoardIndexItem[];
-}
-
-export interface BoardIndexItem {
-  id: string;
-  slug: string;
-  title: string;
-  parentBoardId: string | null;
 }
 
 interface CardBase {

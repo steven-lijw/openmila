@@ -1,4 +1,4 @@
-import { createBoardBundle, createBoardIndexItem, createCardMeta } from "./model";
+import { createBoardBundle, createCardMeta } from "./model";
 import { createSlug } from "./ids";
 import type {
   AppState,
@@ -109,7 +109,6 @@ export function createCardCreationResult(
   position: Point,
 ): { workspace: WorkspaceFile; boardBundle: BoardBundle; createdBoard?: BoardBundle; createdCardId: string } {
   let card = createCardMeta(type, position);
-  let nextWorkspace = workspace;
   let createdBoard: BoardBundle | undefined;
 
   if (card.type === "board") {
@@ -121,15 +120,11 @@ export function createCardCreationResult(
       ...card,
       childBoardId: createdBoard.board.id,
     } satisfies BoardCard;
-    nextWorkspace = {
-      ...workspace,
-      boards: [...workspace.boards, createBoardIndexItem(createdBoard.board)],
-    };
   }
 
   const nextBundle = addCardToBoard(bundle, card);
   return {
-    workspace: nextWorkspace,
+    workspace,
     boardBundle: nextBundle,
     createdBoard,
     createdCardId: card.id,
