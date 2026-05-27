@@ -34,6 +34,7 @@ export function useWorkspaceController() {
   const vaultRef = useRef<BrowserFsVault | null>(null);
   const stateRef = useRef<AppState>(EMPTY_STATE);
   const undoStackRef = useRef<Array<{ workspace: AppState["workspace"]; boards: Record<string, BoardBundle>; currentBoardId: string | null }>>([]);
+  const pendingBoardSlugDeletesRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     stateRef.current = state;
@@ -73,6 +74,7 @@ export function useWorkspaceController() {
 
       const initialized = await vault.initialize();
       vaultRef.current = vault;
+      pendingBoardSlugDeletesRef.current.clear();
       setState({
         vaultName: vault.vaultName,
         workspace: initialized.workspace,
@@ -91,6 +93,13 @@ export function useWorkspaceController() {
       setState((current) => ({ ...current, isReady: true }));
     }
   }, [setError]);
+
+  const markBoardSlugForRemoval = useCallback((oldSlug: string, newSlug: string) => {
+    if (!oldSlug || oldSlug === newSlug) {
+      return;
+    }
+    pendingBoardSlugDeletesRef.current.add(oldSlug);
+  }, []);
 
   useEffect(() => {
     void openVault("recent");
@@ -120,6 +129,18 @@ export function useWorkspaceController() {
         for (const bundle of Object.values(state.boards)) {
           await vaultRef.current!.saveBoardBundle(bundle);
         }
+
+        if (pendingBoardSlugDeletesRef.current.size > 0 && state.workspace) {
+          const activeSlugs = new Set(state.workspace.boards.map((board) => board.slug));
+          const toDelete = Array.from(pendingBoardSlugDeletesRef.current).filter((slug) => !activeSlugs.has(slug));
+          if (toDelete.length > 0) {
+            await Promise.all(toDelete.map((slug) => vaultRef.current!.deleteBoardBySlug(slug)));
+          }
+          for (const slug of toDelete) {
+            pendingBoardSlugDeletesRef.current.delete(slug);
+          }
+        }
+
         setState((current) => ({
           ...current,
           isSaving: false,
@@ -363,6 +384,7 @@ export function useWorkspaceController() {
     const childBoard = latestState.boards[card.childBoardId];
     if (childBoard) {
       const updatedChild = setBoardTitle(childBoard, title);
+      markBoardSlugForRemoval(childBoard.board.slug, updatedChild.board.slug);
       nextBundle = {
         ...nextBundle,
         documents: {
@@ -395,7 +417,7 @@ export function useWorkspaceController() {
     } else {
       updateBoardBundle(boardId, nextBundle);
     }
-  }, [updateBoardBundle]);
+  }, [markBoardSlugForRemoval, updateBoardBundle]);
 
   const bringCardsToFront = useCallback((boardId: string, cardIds: string[]) => {
     if (cardIds.length === 0) {
@@ -639,6 +661,7 @@ export function useWorkspaceController() {
       return;
     }
     const nextBundle = setBoardTitle(currentBoard, title);
+    markBoardSlugForRemoval(currentBoard.board.slug, nextBundle.board.slug);
     const nextWorkspace = {
       ...state.workspace,
       boards: state.workspace.boards.map((boardItem) =>
@@ -657,7 +680,7 @@ export function useWorkspaceController() {
         [currentBoard.board.id]: nextBundle,
       },
     });
-  }, [currentBoard, state.workspace, updateWorkspaceAndBoards]);
+  }, [currentBoard, markBoardSlugForRemoval, state.workspace, updateWorkspaceAndBoards]);
 
   const setViewport = useCallback((boardId: string, position: { x: number; y: number; zoom: number }) => {
     const bundle = getBoard(stateRef.current, boardId);

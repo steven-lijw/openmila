@@ -140,6 +140,15 @@ export class BrowserFsVault {
     }
   }
 
+  async deleteBoardBySlug(slug: string): Promise<void> {
+    const boardsDirectory = await ensureDirectory(this.rootHandle, "boards");
+    try {
+      await boardsDirectory.removeEntry(slug, { recursive: true });
+    } catch {
+      // Ignore missing folders or permission errors during cleanup.
+    }
+  }
+
   async importAsset(file: File, preferredName?: string): Promise<string> {
     const assetsDirectory = await ensureDirectory(this.rootHandle, "assets");
     const name = preferredName ?? `${Date.now()}-${file.name}`;

@@ -567,6 +567,37 @@ export function CanvasBoard(props: CanvasBoardProps) {
     }
   }, [assetUrls, props.boardBundle.board.cards, props.readAssetUrl]);
 
+  useEffect(() => {
+    setAssetUrls((current) => {
+      const next: Record<string, string> = {};
+      for (const url of Object.values(current)) {
+        URL.revokeObjectURL(url);
+      }
+      return next;
+    });
+  }, [props.boardBundle.board.id]);
+
+  useEffect(() => {
+    const activeAssetIds = new Set(
+      props.boardBundle.board.cards
+        .filter((card) => (card.type === "image" || card.type === "file") && card.assetPath)
+        .map((card) => card.id),
+    );
+
+    setAssetUrls((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const [cardId, url] of Object.entries(current)) {
+        if (!activeAssetIds.has(cardId)) {
+          URL.revokeObjectURL(url);
+          delete next[cardId];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [props.boardBundle.board.cards]);
+
   const rootCards = useMemo(
     () => props.boardBundle.board.cards.filter((card) => card.parentId === null),
     [props.boardBundle.board.cards],
@@ -834,7 +865,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
   }, [props]);
 
   const edges = useMemo(() => {
-    return props.boardBundle.board.edges
+    const result = props.boardBundle.board.edges
       .map((edge) => {
         const from = rootCardMap[edge.fromCardId];
         const to = rootCardMap[edge.toCardId];
@@ -1154,26 +1185,6 @@ export function CanvasBoard(props: CanvasBoardProps) {
                     start: anchorPoint,
                     pointer: anchorPoint,
                   });
-                  // Immediately add window listeners so the preview line shows on the very first mousemove
-                  const onMove = (e: globalThis.MouseEvent) => {
-                    setConnectionPreview((current) => {
-                      if (!current) return null;
-                      const rect = canvasRef.current!.getBoundingClientRect();
-                      const pt = {
-                        x: (e.clientX - rect.left - props.boardBundle.board.viewport.x) / props.boardBundle.board.viewport.zoom,
-                        y: (e.clientY - rect.top - props.boardBundle.board.viewport.y) / props.boardBundle.board.viewport.zoom,
-                      };
-                      return { ...current, pointer: pt };
-                    });
-                  };
-                  const onUp = () => {
-                    window.removeEventListener("mousemove", onMove);
-                    window.removeEventListener("mouseup", onUp);
-                    props.onCancelConnection();
-                    setConnectionPreview(null);
-                  };
-                  window.addEventListener("mousemove", onMove);
-                  window.addEventListener("mouseup", onUp);
                 }}
                 onFinishConnection={(cardId) => {
                   props.onFinishConnection(cardId);
