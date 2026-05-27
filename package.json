@@ -1,12 +1,23 @@
 {
-  "name": "milanote-local",
-  "version": "0.1.0",
-  "private": true,
+  "name": "openmila",
+  "version": "1.0.0",
+  "description": "A local-first Milanote-like canvas app — runs entirely in your browser, stores data in your local filesystem.",
   "type": "module",
+  "bin": {
+    "openmila": "./bin/openmila.js"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "build": "vite build",
+    "typecheck": "tsc -b --noEmit",
+    "preview": "vite preview",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "marked": "^18.0.4",
@@ -20,5 +31,24 @@
     "@vitejs/plugin-react": "^4.3.1",
     "typescript": "^5.6.3",
     "vite": "^5.4.10"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YOUR_USERNAME/openmila.git"
+  },
+  "homepage": "https://github.com/YOUR_USERNAME/openmila#readme",
+  "bugs": {
+    "url": "https://github.com/YOUR_USERNAME/openmila/issues"
+  },
+  "license": "MIT",
+  "keywords": [
+    "openmila",
+    "milanote",
+    "canvas",
+    "whiteboard",
+    "local-first",
+    "visual-thinking",
+    "notes",
+    "react"
+  ]
 }
