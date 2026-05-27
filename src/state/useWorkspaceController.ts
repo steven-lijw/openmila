@@ -423,9 +423,7 @@ export function useWorkspaceController() {
           ? current.selectedCardIds.filter((id) => id !== cardId)
           : [...current.selectedCardIds, cardId]
         : [cardId];
-      const activeCardId = multi
-        ? null
-        : cardId;
+      const activeCardId = null;
       return {
         ...current,
         selectedCardIds,
@@ -611,18 +609,7 @@ export function useWorkspaceController() {
 
     nextBoards[latestState.currentBoardId] = nextBundle;
 
-    let trashEntries: string[] | undefined;
-    if (vaultRef.current && trashItems.length > 0) {
-      try {
-        const entryId = await vaultRef.current.createTrashEntry(trashItems);
-        trashEntries = [entryId];
-      } catch (error) {
-        setError(error);
-        return;
-      }
-    }
-
-    pushUndo(trashEntries);
+    pushUndo();
     setState((current) => ({
       ...current,
       boards: nextBoards,
@@ -637,6 +624,11 @@ export function useWorkspaceController() {
       workspace: nextWorkspace,
       boards: nextBoards,
     }).catch(setError);
+
+    // Move files to trash asynchronously so the UI updates immediately
+    if (vaultRef.current && trashItems.length > 0) {
+      void vaultRef.current.createTrashEntry(trashItems).catch(setError);
+    }
   }, [persistStateSnapshot, pushUndo, setError]);
 
   useEffect(() => {

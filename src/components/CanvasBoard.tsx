@@ -51,6 +51,8 @@ interface CardRendererProps {
   onOpenBoard: (childBoardId: string) => void;
   onStartPointerDrag: (card: CardMeta, event: MouseEvent<HTMLDivElement>) => void;
   onStartResize: (card: CardMeta, event: MouseEvent<HTMLButtonElement>) => void;
+  editingCardId: string | null;
+  onStartEditing: () => void;
 }
 
 interface DraggingCardState {
@@ -472,6 +474,9 @@ export function CanvasBoard(props: CanvasBoardProps) {
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const canvasInnerRef = useRef<HTMLDivElement | null>(null);
   const ignoreNextCanvasClickRef = useRef(false);
+  const propsRef = useRef(props);
+  propsRef.current = props;
+  const { onDeleteEdge } = props;
   const [assetUrls, setAssetUrls] = useState<Record<string, string>>({});
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState<Point | null>(null);
@@ -481,6 +486,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
   const [committedPositions, setCommittedPositions] = useState<Record<string, Point>>({});
   const [resizingCard, setResizingCard] = useState<ResizingCardState | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [editingCardId, setEditingCardId] = useState<string | null>(null);
   const [edgeMenuPos, setEdgeMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [localEdgeStyles, setLocalEdgeStyles] = useState<Record<string, { arrowDirection?: string; lineStyle?: string }>>({});
 
@@ -750,9 +756,14 @@ export function CanvasBoard(props: CanvasBoardProps) {
 
     const handleMouseUp = () => {
       if (draggingCard) {
-        setCommittedPositions((current) => ({ ...current, ...draggingCard.positions }));
-        for (const [cardId, position] of Object.entries(draggingCard.positions)) {
-          props.onUpdateCard(cardId, (card) => ({ ...card, position }));
+        const didMove = Object.entries(draggingCard.positions).some(
+          ([cardId, pos]) => !pointsEqual(pos, draggingCard.startPositions[cardId]),
+        );
+        if (didMove) {
+          setCommittedPositions((current) => ({ ...current, ...draggingCard.positions }));
+          for (const [cardId, position] of Object.entries(draggingCard.positions)) {
+            props.onUpdateCard(cardId, (card) => ({ ...card, position }));
+          }
         }
       }
 
@@ -773,7 +784,6 @@ export function CanvasBoard(props: CanvasBoardProps) {
           })
           .map((card) => card.id);
 
-        ignoreNextCanvasClickRef.current = true;
         props.onClearSelection();
         selectedIds.forEach((cardId, index) => props.onSelectCard(cardId, index > 0));
         setSelectionBox(null);
@@ -800,6 +810,19 @@ export function CanvasBoard(props: CanvasBoardProps) {
     };
   }, [committedPositions, connectionPreview, draggingCard, props, resizingCard, rootCards, selectionBox]);
 
+  // Escape to exit edit mode
+  useEffect(() => {
+    if (!editingCardId) return;
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setEditingCardId(null);
+        (document.activeElement as HTMLElement)?.blur();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [editingCardId]);
+
   // Delete selected edge via keyboard
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -814,12 +837,12 @@ export function CanvasBoard(props: CanvasBoardProps) {
         return;
       }
       event.preventDefault();
-      props.onDeleteEdge?.(selectedEdgeId);
+      onDeleteEdge?.(selectedEdgeId);
       setSelectedEdgeId(null);
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedEdgeId, props]);
+  }, [selectedEdgeId, onDeleteEdge]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -829,21 +852,22 @@ export function CanvasBoard(props: CanvasBoardProps) {
 
     const handleWheel = (event: WheelEvent) => {
       event.preventDefault();
+      const p = propsRef.current;
 
       if (event.ctrlKey) {
         const rect = canvas.getBoundingClientRect();
         const worldX =
-          (event.clientX - rect.left - props.boardBundle.board.viewport.x) / props.boardBundle.board.viewport.zoom;
+          (event.clientX - rect.left - p.boardBundle.board.viewport.x) / p.boardBundle.board.viewport.zoom;
         const worldY =
-          (event.clientY - rect.top - props.boardBundle.board.viewport.y) / props.boardBundle.board.viewport.zoom;
+          (event.clientY - rect.top - p.boardBundle.board.viewport.y) / p.boardBundle.board.viewport.zoom;
         const nextZoom = Math.max(
           0.4,
-          Math.min(1.8, props.boardBundle.board.viewport.zoom - event.deltaY * 0.01),
+          Math.min(1.8, p.boardBundle.board.viewport.zoom - event.deltaY * 0.01),
         );
         const nextX = event.clientX - rect.left - worldX * nextZoom;
         const nextY = event.clientY - rect.top - worldY * nextZoom;
-        props.onViewportChange({
-          ...props.boardBundle.board.viewport,
+        p.onViewportChange({
+          ...p.boardBundle.board.viewport,
           x: nextX,
           y: nextY,
           zoom: nextZoom,
@@ -851,10 +875,10 @@ export function CanvasBoard(props: CanvasBoardProps) {
         return;
       }
 
-      props.onViewportChange({
-        ...props.boardBundle.board.viewport,
-        x: props.boardBundle.board.viewport.x - event.deltaX,
-        y: props.boardBundle.board.viewport.y - event.deltaY,
+      p.onViewportChange({
+        ...p.boardBundle.board.viewport,
+        x: p.boardBundle.board.viewport.x - event.deltaX,
+        y: p.boardBundle.board.viewport.y - event.deltaY,
       });
     };
 
@@ -862,7 +886,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
     return () => {
       canvas.removeEventListener("wheel", handleWheel);
     };
-  }, [props]);
+  }, []);
 
   const edges = useMemo(() => {
     const result = props.boardBundle.board.edges
@@ -993,6 +1017,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
           const target = event.target as HTMLElement;
           if (!target.closest(".canvas-card") && !target.closest(".edge-layer line")) {
             props.onClearSelection();
+            setEditingCardId(null);
             setSelectedEdgeId(null);
             setEdgeMenuPos(null);
           }
@@ -1014,8 +1039,10 @@ export function CanvasBoard(props: CanvasBoardProps) {
 
           const startPoint = screenToCanvas(event.clientX, event.clientY);
           props.onClearSelection();
+          setEditingCardId(null);
           setSelectedEdgeId(null);
           setEdgeMenuPos(null);
+          ignoreNextCanvasClickRef.current = true;
           setSelectionBox({
             start: startPoint,
             current: startPoint,
@@ -1191,6 +1218,8 @@ export function CanvasBoard(props: CanvasBoardProps) {
                   setConnectionPreview(null);
                 }}
                 onOpenBoard={props.onOpenBoard}
+                editingCardId={editingCardId}
+                onStartEditing={() => setEditingCardId(card.id)}
                 onStartPointerDrag={(cardMeta, event) => {
                   const target = event.target as HTMLElement;
                   if (isInteractiveElement(target)) {
@@ -1328,7 +1357,7 @@ function CardRenderer(props: CardRendererProps) {
   const { boardBundle, card } = props;
   const markdown = boardBundle.documents[card.id] ?? "";
   const isSelected = props.selectedCardIds.includes(card.id);
-  const isEditable = props.activeCardId === card.id;
+  const isEditing = props.editingCardId === card.id;
   const isBoardCard = card.type === "board";
   const cardRef = useRef<HTMLDivElement | null>(null);
   const [isHovered, setIsHovered] = useState(false);
@@ -1351,11 +1380,11 @@ function CardRenderer(props: CardRendererProps) {
 
   // Auto-focus input when entering edit mode
   useEffect(() => {
-    if (isEditable && !isBoardCard && cardRef.current) {
+    if (isEditing && cardRef.current) {
       const el = cardRef.current.querySelector<HTMLElement>(".card-textarea, .todo-text-input, .link-fields input");
       el?.focus();
     }
-  }, [isEditable, isBoardCard]);
+  }, [isEditing]);
 
   // Cleanup timeout on unmount
   useEffect(() => {
@@ -1406,7 +1435,11 @@ function CardRenderer(props: CardRendererProps) {
       }}
       onClick={(event) => {
         event.stopPropagation();
-        props.onSelectCard(card.id, event.shiftKey);
+        if (isSelected && !event.shiftKey) {
+          props.onStartEditing();
+        } else {
+          props.onSelectCard(card.id, event.shiftKey);
+        }
       }}
       onMouseUp={(event) => {
         if (props.connectFromCardId && props.connectFromCardId !== card.id) {
@@ -1420,7 +1453,7 @@ function CardRenderer(props: CardRendererProps) {
         }
       }}
     >
-      {isHovered && !isEditable ? (
+      {isHovered && !isEditing ? (
         <div className="color-bar">
           {CARD_COLORS.map((colorDef) => (
             <button
@@ -1440,7 +1473,7 @@ function CardRenderer(props: CardRendererProps) {
           ))}
         </div>
       ) : null}
-      {isEditable && (card.type === "note" || card.type === "todo") ? (
+      {isEditing && (card.type === "note" || card.type === "todo") ? (
         <FormatBar
           markdown={markdown}
           onUpdateMarkdown={(nextMarkdown) => props.onUpdateMarkdown(card.id, nextMarkdown)}
@@ -1463,7 +1496,7 @@ function CardRenderer(props: CardRendererProps) {
         card,
         markdown,
         assetUrl: props.assetUrls[card.id],
-        isEditable,
+        isEditable: card.type === "board" ? isEditing : (isSelected || isEditing),
         onUpdateCard: (updater) => props.onUpdateCard(card.id, updater),
         onUpdateMarkdown: (nextMarkdown) => props.onUpdateMarkdown(card.id, nextMarkdown),
         onUpdateBoardCardTitle: (title) => props.onUpdateBoardCardTitle(props.boardBundle.board.id, card.id, title),
