@@ -4,7 +4,7 @@
   "description": "A local-first Milanote-like canvas app — runs entirely in your browser, stores data in your local filesystem.",
   "type": "module",
   "bin": {
-    "openmila": "./bin/openmila.js"
+    "openmila": "bin/openmila.js"
   },
   "files": [
     "dist",
