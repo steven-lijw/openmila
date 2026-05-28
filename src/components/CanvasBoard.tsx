@@ -145,6 +145,7 @@ function renderEditableContent(input: {
       <LinkEditor
         card={card}
         preview={preview}
+        isEditable={isEditable}
         onUpdateCard={onUpdateCard}
       />
     );
@@ -268,21 +269,15 @@ function NoteEditor(props: {
 function LinkEditor(props: {
   card: CardMeta;
   preview: ReturnType<typeof getLinkPreview>;
+  isEditable: boolean;
   onUpdateCard: (updater: (card: CardMeta) => CardMeta) => void;
 }) {
-  const { card, preview, onUpdateCard } = props;
+  const { card, preview, isEditable, onUpdateCard } = props;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const url = card.type === "link" ? card.url : "";
   const updateRef = useRef(onUpdateCard);
   const inputRef = useRef<HTMLInputElement | null>(null);
   updateRef.current = onUpdateCard;
-
-  // Sync input value from props without losing focus during paste
-  useEffect(() => {
-    if (inputRef.current && inputRef.current.value !== url) {
-      inputRef.current.value = url;
-    }
-  }, [url]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -314,7 +309,7 @@ function LinkEditor(props: {
       },
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url, card.size.height]); // deliberately NOT depending on onUpdateCard
+  }, [url, card.size.height, isEditable]); // deliberately NOT depending on onUpdateCard
 
   const handleImgLoad = () => {
     const container = containerRef.current;
@@ -339,29 +334,22 @@ function LinkEditor(props: {
     }));
   };
 
+  const showInput = isEditable || !preview;
+
   return (
     <div ref={containerRef} className="link-fields">
-      <input
-        ref={inputRef}
-        defaultValue={url}
-        placeholder="https://example.com"
-        onPaste={() => {
-          // Let native paste fill the input, then read value after a tick
-          requestAnimationFrame(() => {
-            const val = inputRef.current?.value ?? "";
-            if (val !== url) {
-              onUpdateCard((currentCard) =>
-                currentCard.type === "link" ? { ...currentCard, url: val } : currentCard,
-              );
-            }
-          });
-        }}
-        onChange={(event) =>
-          onUpdateCard((currentCard) =>
-            currentCard.type === "link" ? { ...currentCard, url: event.target.value } : currentCard,
-          )
-        }
-      />
+      {showInput ? (
+        <input
+          ref={inputRef}
+          value={url}
+          placeholder="https://example.com"
+          onChange={(event) =>
+            onUpdateCard((currentCard) =>
+              currentCard.type === "link" ? { ...currentCard, url: event.target.value } : currentCard,
+            )
+          }
+        />
+      ) : null}
       {preview ? (
         <a className="link-preview" href={preview.href} target="_blank" rel="noreferrer">
           {preview.imageUrl ? <img src={preview.imageUrl} alt={preview.title} className="link-preview-image" onLoad={handleImgLoad} /> : null}
@@ -1439,6 +1427,9 @@ function CardRenderer(props: CardRendererProps) {
           props.onStartEditing();
         } else {
           props.onSelectCard(card.id, event.shiftKey);
+          if (card.type === "link" && !event.shiftKey) {
+            props.onStartEditing();
+          }
         }
       }}
       onMouseUp={(event) => {

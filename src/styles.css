@@ -378,6 +378,8 @@ button {
   flex: 1;
   min-height: 0;
   position: relative;
+  display: flex;
+  flex-direction: column;
 }
 
 .canvas-card-content .connection-dot {
@@ -741,8 +743,11 @@ button {
 }
 
 .link-fields {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
+  flex: 1;
+  min-height: 0;
 }
 
 .image-card-body {
@@ -816,9 +821,6 @@ button {
   visibility: hidden;
 }
 
-.canvas-board.is-resizing .file-preview-frame {
-  visibility: hidden;
-}
 
 .file-preview-audio {
   width: 100%;
@@ -897,7 +899,8 @@ button {
 
 
 .link-preview {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
   margin-top: 8px;
   border: 1px solid var(--color-border);
@@ -906,17 +909,21 @@ button {
   color: inherit;
   text-decoration: none;
   background: #fff;
+  flex: 1;
+  min-height: 0;
 }
 
 .link-preview-image {
   width: 100%;
-  max-height: 150px;
+  flex: 1;
+  min-height: 0;
   object-fit: cover;
   display: block;
 }
 
 .link-preview-copy {
   padding: 8px;
+  flex-shrink: 0;
 }
 
 .link-preview-title {
