@@ -17,6 +17,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import { fetchPageMeta } from "../lib/fetchMeta.js";
 
 // ── Resolve the dist directory ────────────────────────────────────────────
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -44,12 +45,34 @@ const MIME = {
 
 // ── Simple static file server ─────────────────────────────────────────────
 function createServer() {
-  return http.createServer((req, res) => {
+  return http.createServer(async (req, res) => {
     // Basic security: refuse paths with ".."
     let safePath = req.url?.split("?")[0].split("#")[0] ?? "/";
     if (safePath.includes("..")) {
       res.writeHead(403);
       res.end("Forbidden");
+      return;
+    }
+
+    // ── /api/meta — link metadata endpoint ────────────────────────────────
+    if (req.method === "GET" && safePath === "/api/meta") {
+      const urlParam = new URL(req.url, "http://localhost").searchParams.get("url");
+      if (!urlParam || !/^https?:\/\//.test(urlParam)) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing or invalid url parameter" }));
+        return;
+      }
+      try {
+        const meta = await fetchPageMeta(urlParam);
+        res.writeHead(200, {
+          "Content-Type": "application/json",
+          "Cache-Control": "public, max-age=3600",
+        });
+        res.end(JSON.stringify(meta));
+      } catch {
+        res.writeHead(502, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Failed to fetch target URL" }));
+      }
       return;
     }
 

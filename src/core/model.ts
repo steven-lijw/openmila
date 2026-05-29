@@ -30,7 +30,7 @@ export type CardColorKey = (typeof CARD_COLORS)[number]["key"];
 const DEFAULT_CARD_SIZE = {
   note: { width: 304, height: 64 },
   todo: { width: 304, height: 64 },
-  link: { width: 304, height: 64 },
+  link: { width: 304, height: 220 },
   image: { width: 280, height: 210 },
   file: { width: 320, height: 260 },
   column: { width: 300, height: 360 },

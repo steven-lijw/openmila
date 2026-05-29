@@ -380,6 +380,20 @@ button {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
 
+/* Link cards with an image preview: strip card chrome so the thumbnail fills the card */
+.canvas-card.type-link:has(.link-preview-image) {
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.canvas-card.type-link:has(.link-preview-image) .link-preview {
+  border: none;
+  margin-top: 0;
+  background: transparent;
+}
+
 .canvas-card-content {
   overflow: hidden;
   flex: 1;
@@ -801,6 +815,36 @@ button {
   accent-color: var(--color-primary);
 }
 
+.todo-item-preview {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: center;
+  pointer-events: none;
+}
+
+.todo-checkbox-preview {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid #aaa;
+  border-radius: 3px;
+  background: #fff;
+}
+
+.todo-checkbox-preview.checked {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.todo-text-preview {
+  font-size: inherit;
+  color: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .image-card-body {
   flex: 1;
   min-height: 0;
@@ -969,6 +1013,7 @@ button {
   background: #fff;
   flex: 1;
   min-height: 0;
+  cursor: pointer;
 }
 
 .link-preview-image {

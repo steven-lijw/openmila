@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { DragEvent, MouseEvent } from "react";
 import { formatFileSize, getFilePreviewMeta } from "../core/filePreview";
 import { createId } from "../core/ids";
-import { getLinkPreview } from "../core/linkPreview";
+import { LinkPreviewDisplay } from "./LinkPreviewDisplay";
 import { renderMarkdown } from "../core/markdown";
 import { parseTodoMarkdown, stringifyTodoMarkdown } from "../core/todoMarkdown";
 import { CARD_COLORS } from "../core/model";
@@ -143,6 +143,18 @@ function renderEditableContent(input: {
 
   if (card.type === "todo") {
     const items = parseTodoMarkdown(markdown);
+    if (!isEditable) {
+      return (
+        <div className="todo-list todo-list-preview">
+          {items.map((item) => (
+            <div key={item.id} className="todo-item todo-item-preview">
+              <span className={`todo-checkbox-preview${item.checked ? " checked" : ""}`} />
+              <span className="todo-text-preview">{item.text || "New task"}</span>
+            </div>
+          ))}
+        </div>
+      );
+    }
     return <TodoList card={card} items={items} onUpdateMarkdown={onUpdateMarkdown} onUpdateCard={onUpdateCard} />;
   }
 
@@ -159,19 +171,7 @@ function renderEditableContent(input: {
         />
       );
     }
-    const preview = getLinkPreview(card.url);
-    if (!preview) {
-      return <div className="card-preview card-preview-empty">Enter a URL…</div>;
-    }
-    return (
-      <a className="link-preview" href={preview.href} target="_blank" rel="noreferrer">
-        {preview.imageUrl ? <img src={preview.imageUrl} alt={preview.title} className="link-preview-image" /> : null}
-        <div className="link-preview-copy">
-          <div className="link-preview-title">{preview.title}</div>
-          <div className="link-preview-subtitle">{preview.subtitle}</div>
-        </div>
-      </a>
-    );
+    return <LinkPreviewDisplay url={card.url} />;
   }
 
   if (card.type === "image") {
@@ -1401,7 +1401,7 @@ function CardRenderer(props: CardRendererProps) {
         left: props.displayPosition.x,
         top: props.displayPosition.y,
         ...(isBoardCard ? {} : { width: props.displaySize.width, height: props.displaySize.height }),
-        ...(card.cardColor && card.type !== "image" ? { backgroundColor: card.cardColor } : {}),
+        ...(card.cardColor && card.type !== "image" && card.type !== "link" ? { backgroundColor: card.cardColor } : {}),
       }}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
@@ -1433,13 +1433,18 @@ function CardRenderer(props: CardRendererProps) {
       }}
       onClick={(event) => {
         event.stopPropagation();
+        if (card.type === "link" && !event.shiftKey) {
+          if (isSelected) {
+            window.open(card.url, "_blank");
+          } else {
+            props.onSelectCard(card.id, false);
+          }
+          return;
+        }
         if (isSelected && !event.shiftKey) {
           props.onStartEditing();
         } else {
           props.onSelectCard(card.id, event.shiftKey);
-          if (card.type === "link" && !event.shiftKey) {
-            props.onStartEditing();
-          }
         }
       }}
       onMouseUp={(event) => {
@@ -1454,7 +1459,7 @@ function CardRenderer(props: CardRendererProps) {
         }
       }}
     >
-      {isHovered && !isEditing && card.type !== "image" ? (
+      {isHovered && !isEditing && card.type !== "image" && card.type !== "link" ? (
         <div className="color-bar">
           {CARD_COLORS.map((colorDef) => (
             <button
@@ -1486,7 +1491,7 @@ function CardRenderer(props: CardRendererProps) {
         card,
         markdown,
         assetUrl: props.assetUrls[card.id],
-        isEditable: (card.type === "board" || card.type === "note" || card.type === "link") ? isEditing : (isSelected || isEditing),
+        isEditable: (card.type === "board" || card.type === "note" || card.type === "link" || card.type === "todo") ? isEditing : (isSelected || isEditing),
         onUpdateCard: (updater) => props.onUpdateCard(card.id, updater),
         onUpdateMarkdown: (nextMarkdown) => props.onUpdateMarkdown(card.id, nextMarkdown),
         onUpdateBoardCardTitle: (title) => props.onUpdateBoardCardTitle(props.boardBundle.board.id, card.id, title),
