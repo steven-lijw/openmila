@@ -3,6 +3,7 @@ import type { DragEvent, MouseEvent } from "react";
 import { formatFileSize, getFilePreviewMeta } from "../core/filePreview";
 import { createId } from "../core/ids";
 import { getLinkPreview } from "../core/linkPreview";
+import { renderMarkdown } from "../core/markdown";
 import { parseTodoMarkdown, stringifyTodoMarkdown } from "../core/todoMarkdown";
 import { CARD_COLORS } from "../core/model";
 import type { BoardBundle, CardMeta, DragCardPayload, DragToolPayload, Point } from "../types";
@@ -116,6 +117,7 @@ function renderEditableContent(input: {
   onUpdateCard: (updater: (card: CardMeta) => CardMeta) => void;
   onUpdateMarkdown: (markdown: string) => void;
   onUpdateBoardCardTitle?: (title: string) => void;
+  onTextareaRef?: (ref: HTMLTextAreaElement | null) => void;
 }) {
   const { card, markdown, assetUrl, isEditable, onUpdateCard, onUpdateMarkdown, onUpdateBoardCardTitle } = input;
 
@@ -126,9 +128,13 @@ function renderEditableContent(input: {
         markdown={markdown}
         onUpdateMarkdown={onUpdateMarkdown}
         onUpdateCard={onUpdateCard}
+        onTextareaRef={input.onTextareaRef ?? (() => {})}
       />
     ) : markdown ? (
-      <div className="card-preview">{markdown}</div>
+      <div
+        className="card-preview markdown-body"
+        dangerouslySetInnerHTML={{ __html: renderMarkdown(markdown) }}
+      />
     ) : (
       <div className="card-preview card-preview-empty">Start writing…</div>
     );
@@ -140,14 +146,30 @@ function renderEditableContent(input: {
   }
 
   if (card.type === "link") {
+    if (isEditable) {
+      return (
+        <input
+          className="link-url-input"
+          value={card.url}
+          placeholder="https://example.com"
+          onChange={(e) =>
+            onUpdateCard((c) => (c.type === "link" ? { ...c, url: e.target.value } : c))
+          }
+        />
+      );
+    }
     const preview = getLinkPreview(card.url);
+    if (!preview) {
+      return <div className="card-preview card-preview-empty">Enter a URL…</div>;
+    }
     return (
-      <LinkEditor
-        card={card}
-        preview={preview}
-        isEditable={isEditable}
-        onUpdateCard={onUpdateCard}
-      />
+      <a className="link-preview" href={preview.href} target="_blank" rel="noreferrer">
+        {preview.imageUrl ? <img src={preview.imageUrl} alt={preview.title} className="link-preview-image" /> : null}
+        <div className="link-preview-copy">
+          <div className="link-preview-title">{preview.title}</div>
+          <div className="link-preview-subtitle">{preview.subtitle}</div>
+        </div>
+      </a>
     );
   }
 
@@ -155,7 +177,7 @@ function renderEditableContent(input: {
     return (
       <div className="image-card-body">
         {card.assetPath && assetUrl ? (
-          <img src={assetUrl} alt={card.title} className="image-preview" />
+          <img src={assetUrl} alt={card.title} className="image-preview" draggable="false" />
         ) : (
           <div className="image-placeholder">Drop or create with a file to show the image here.</div>
         )}
@@ -251,115 +273,51 @@ function NoteEditor(props: {
   markdown: string;
   onUpdateMarkdown: (markdown: string) => void;
   onUpdateCard: (updater: (card: CardMeta) => CardMeta) => void;
+  onTextareaRef: (ref: HTMLTextAreaElement | null) => void;
 }) {
-  const { card, markdown, onUpdateMarkdown } = props;
+  const { card, markdown, onUpdateMarkdown, onTextareaRef } = props;
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const wrapSelection = (before: string, after: string) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const selected = markdown.slice(start, end);
+    const next = markdown.slice(0, start) + before + selected + after + markdown.slice(end);
+    onUpdateMarkdown(next);
+    requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(start + before.length, start + before.length + selected.length);
+    });
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const mod = event.metaKey || event.ctrlKey;
+    if (mod && event.key === "b") {
+      event.preventDefault();
+      wrapSelection("**", "**");
+    } else if (mod && event.key === "i") {
+      event.preventDefault();
+      wrapSelection("*", "*");
+    } else if (mod && event.shiftKey && event.key === "x") {
+      event.preventDefault();
+      wrapSelection("~~", "~~");
+    }
+  };
 
   return (
     <textarea
-      ref={textareaRef}
+      ref={(el) => {
+        textareaRef.current = el;
+        onTextareaRef(el);
+      }}
       className="card-textarea"
       value={markdown}
       placeholder="Start writing…"
       onChange={(event) => onUpdateMarkdown(event.target.value)}
+      onKeyDown={handleKeyDown}
     />
-  );
-}
-
-function LinkEditor(props: {
-  card: CardMeta;
-  preview: ReturnType<typeof getLinkPreview>;
-  isEditable: boolean;
-  onUpdateCard: (updater: (card: CardMeta) => CardMeta) => void;
-}) {
-  const { card, preview, isEditable, onUpdateCard } = props;
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const url = card.type === "link" ? card.url : "";
-  const updateRef = useRef(onUpdateCard);
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  updateRef.current = onUpdateCard;
-
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) {
-      return;
-    }
-    if (!url) {
-      if (card.size.height > 64) {
-        requestAnimationFrame(() => {
-          updateRef.current((currentCard) => ({
-            ...currentCard,
-            size: { ...currentCard.size, height: 64 },
-          }));
-        });
-      }
-      return;
-    }
-    const contentHeight = container.scrollHeight;
-    const padding = 24;
-    const desiredHeight = Math.ceil(contentHeight + padding);
-    if (desiredHeight <= card.size.height) {
-      return;
-    }
-    updateRef.current((currentCard) => ({
-      ...currentCard,
-      size: {
-        ...currentCard.size,
-        height: Math.max(currentCard.size.height, desiredHeight),
-      },
-    }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url, card.size.height, isEditable]); // deliberately NOT depending on onUpdateCard
-
-  const handleImgLoad = () => {
-    const container = containerRef.current;
-    if (!container) {
-      return;
-    }
-    if (!url) {
-      return;
-    }
-    const contentHeight = container.scrollHeight;
-    const padding = 24;
-    const desiredHeight = Math.ceil(contentHeight + padding);
-    if (desiredHeight <= card.size.height) {
-      return;
-    }
-    updateRef.current((currentCard) => ({
-      ...currentCard,
-      size: {
-        ...currentCard.size,
-        height: Math.max(currentCard.size.height, desiredHeight),
-      },
-    }));
-  };
-
-  const showInput = isEditable || !preview;
-
-  return (
-    <div ref={containerRef} className="link-fields">
-      {showInput ? (
-        <input
-          ref={inputRef}
-          value={url}
-          placeholder="https://example.com"
-          onChange={(event) =>
-            onUpdateCard((currentCard) =>
-              currentCard.type === "link" ? { ...currentCard, url: event.target.value } : currentCard,
-            )
-          }
-        />
-      ) : null}
-      {preview ? (
-        <a className="link-preview" href={preview.href} target="_blank" rel="noreferrer">
-          {preview.imageUrl ? <img src={preview.imageUrl} alt={preview.title} className="link-preview-image" onLoad={handleImgLoad} /> : null}
-          <div className="link-preview-copy">
-            <div className="link-preview-title">{preview.title}</div>
-            <div className="link-preview-subtitle">{preview.subtitle}</div>
-          </div>
-        </a>
-      ) : null}
-    </div>
   );
 }
 
@@ -694,17 +652,33 @@ export function CanvasBoard(props: CanvasBoardProps) {
     props.onViewportChange({ x, y, zoom });
   }, [committedPositions, props, rootCardMap]);
 
+  const draggingCardRef = useRef(draggingCard);
+  const connectionPreviewRef = useRef(connectionPreview);
+  const selectionBoxRef = useRef(selectionBox);
+  const resizingCardRef = useRef(resizingCard);
+  const committedPositionsRef = useRef(committedPositions);
+  const rootCardsRef = useRef(rootCards);
+  draggingCardRef.current = draggingCard;
+  connectionPreviewRef.current = connectionPreview;
+  selectionBoxRef.current = selectionBox;
+  resizingCardRef.current = resizingCard;
+  committedPositionsRef.current = committedPositions;
+  rootCardsRef.current = rootCards;
+
+  const hasActiveInteraction = draggingCard || connectionPreview || selectionBox || resizingCard;
+
   useEffect(() => {
-    if (!draggingCard && !connectionPreview && !selectionBox && !resizingCard) {
+    if (!hasActiveInteraction) {
       return;
     }
 
     const handleMouseMove = (event: globalThis.MouseEvent) => {
       const point = screenToCanvas(event.clientX, event.clientY);
+      const dc = draggingCardRef.current;
 
-      if (draggingCard) {
-        const deltaX = point.x - draggingCard.startPointer.x;
-        const deltaY = point.y - draggingCard.startPointer.y;
+      if (dc) {
+        const deltaX = point.x - dc.startPointer.x;
+        const deltaY = point.y - dc.startPointer.y;
 
         setDraggingCard((current) =>
           current
@@ -724,18 +698,19 @@ export function CanvasBoard(props: CanvasBoardProps) {
         );
       }
 
-      if (connectionPreview) {
+      if (connectionPreviewRef.current) {
         setConnectionPreview((current) => (current ? { ...current, pointer: point } : null));
       }
 
-      if (selectionBox) {
+      if (selectionBoxRef.current) {
         setSelectionBox((current) => (current ? { ...current, current: point } : null));
       }
 
-      if (resizingCard) {
-        const minSize = getMinSize(rootCardMap[resizingCard.cardId]);
-        const nextWidth = Math.max(minSize.width, resizingCard.startSize.width + (point.x - resizingCard.startPointer.x));
-        const nextHeight = Math.max(minSize.height, resizingCard.startSize.height + (point.y - resizingCard.startPointer.y));
+      const rc = resizingCardRef.current;
+      if (rc) {
+        const minSize = getMinSize(rootCardMap[rc.cardId]);
+        const nextWidth = Math.max(minSize.width, rc.startSize.width + (point.x - rc.startPointer.x));
+        const nextHeight = Math.max(minSize.height, rc.startSize.height + (point.y - rc.startPointer.y));
         setResizingCard((current) =>
           current ? { ...current, size: { width: nextWidth, height: nextHeight } } : null,
         );
@@ -743,29 +718,34 @@ export function CanvasBoard(props: CanvasBoardProps) {
     };
 
     const handleMouseUp = () => {
-      if (draggingCard) {
-        const didMove = Object.entries(draggingCard.positions).some(
-          ([cardId, pos]) => !pointsEqual(pos, draggingCard.startPositions[cardId]),
+      const dc = draggingCardRef.current;
+      const sb = selectionBoxRef.current;
+      const cp = connectionPreviewRef.current;
+      const rc = resizingCardRef.current;
+
+      if (dc) {
+        const didMove = Object.entries(dc.positions).some(
+          ([cardId, pos]) => !pointsEqual(pos, dc.startPositions[cardId]),
         );
         if (didMove) {
-          setCommittedPositions((current) => ({ ...current, ...draggingCard.positions }));
-          for (const [cardId, position] of Object.entries(draggingCard.positions)) {
+          setCommittedPositions((current) => ({ ...current, ...dc.positions }));
+          for (const [cardId, position] of Object.entries(dc.positions)) {
             props.onUpdateCard(cardId, (card) => ({ ...card, position }));
           }
         }
       }
 
-      if (selectionBox) {
-        const minX = Math.min(selectionBox.start.x, selectionBox.current.x);
-        const maxX = Math.max(selectionBox.start.x, selectionBox.current.x);
-        const minY = Math.min(selectionBox.start.y, selectionBox.current.y);
-        const maxY = Math.max(selectionBox.start.y, selectionBox.current.y);
+      if (sb) {
+        const minX = Math.min(sb.start.x, sb.current.x);
+        const maxX = Math.max(sb.start.x, sb.current.x);
+        const minY = Math.min(sb.start.y, sb.current.y);
+        const maxY = Math.max(sb.start.y, sb.current.y);
 
-        const selectedIds = rootCards
+        const selectedIds = rootCardsRef.current
           .filter((card) => {
             const displayPosition =
-              draggingCard?.positions[card.id] ?? committedPositions[card.id] ?? card.position;
-            const displaySize = resizingCard?.cardId === card.id ? resizingCard.size : card.size;
+              dc?.positions[card.id] ?? committedPositionsRef.current[card.id] ?? card.position;
+            const displaySize = rc?.cardId === card.id ? rc.size : card.size;
             const right = displayPosition.x + displaySize.width;
             const bottom = displayPosition.y + displaySize.height;
             return right >= minX && displayPosition.x <= maxX && bottom >= minY && displayPosition.y <= maxY;
@@ -777,13 +757,13 @@ export function CanvasBoard(props: CanvasBoardProps) {
         setSelectionBox(null);
       }
 
-      if (connectionPreview) {
+      if (cp) {
         props.onCancelConnection();
         setConnectionPreview(null);
       }
 
-      if (resizingCard) {
-        props.onUpdateCard(resizingCard.cardId, (card) => ({ ...card, size: resizingCard.size }));
+      if (rc) {
+        props.onUpdateCard(rc.cardId, (card) => ({ ...card, size: rc.size }));
         setResizingCard(null);
       }
 
@@ -796,7 +776,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [committedPositions, connectionPreview, draggingCard, props, resizingCard, rootCards, selectionBox]);
+  }, [hasActiveInteraction, props, rootCardMap]);
 
   // Escape to exit edit mode
   useEffect(() => {
@@ -1348,6 +1328,7 @@ function CardRenderer(props: CardRendererProps) {
   const isEditing = props.editingCardId === card.id;
   const isBoardCard = card.type === "board";
   const cardRef = useRef<HTMLDivElement | null>(null);
+  const noteTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [isHovered, setIsHovered] = useState(false);
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1369,7 +1350,7 @@ function CardRenderer(props: CardRendererProps) {
   // Auto-focus input when entering edit mode
   useEffect(() => {
     if (isEditing && cardRef.current) {
-      const el = cardRef.current.querySelector<HTMLElement>(".card-textarea, .todo-text-input, .link-fields input");
+      const el = cardRef.current.querySelector<HTMLElement>(".card-textarea, .todo-text-input, .link-url-input");
       el?.focus();
     }
   }, [isEditing]);
@@ -1468,13 +1449,27 @@ function CardRenderer(props: CardRendererProps) {
         <FormatBar
           markdown={markdown}
           onUpdateMarkdown={(nextMarkdown) => props.onUpdateMarkdown(card.id, nextMarkdown)}
+          textareaRef={noteTextareaRef}
         />
       ) : null}
       <div className="canvas-card-content">
-        {!isBoardCard ? (
-          <div
-            className="connection-dot"
+      {renderEditableContent({
+        card,
+        markdown,
+        assetUrl: props.assetUrls[card.id],
+        isEditable: (card.type === "board" || card.type === "note" || card.type === "link") ? isEditing : (isSelected || isEditing),
+        onUpdateCard: (updater) => props.onUpdateCard(card.id, updater),
+        onUpdateMarkdown: (nextMarkdown) => props.onUpdateMarkdown(card.id, nextMarkdown),
+        onUpdateBoardCardTitle: (title) => props.onUpdateBoardCardTitle(props.boardBundle.board.id, card.id, title),
+        onTextareaRef: (ref) => { noteTextareaRef.current = ref; },
+      })}
+      </div>
+
+      {!isBoardCard && isSelected ? (
+        <div
+          className="connect-handle"
           onMouseDown={(event) => {
+            event.stopPropagation();
             props.onStartConnection(card.id, {
               x: props.displayPosition.x + props.displaySize.width - 10,
               y: props.displayPosition.y + 10,
@@ -1483,25 +1478,25 @@ function CardRenderer(props: CardRendererProps) {
         />
       ) : null}
 
-      {renderEditableContent({
-        card,
-        markdown,
-        assetUrl: props.assetUrls[card.id],
-        isEditable: card.type === "board" ? isEditing : (isSelected || isEditing),
-        onUpdateCard: (updater) => props.onUpdateCard(card.id, updater),
-        onUpdateMarkdown: (nextMarkdown) => props.onUpdateMarkdown(card.id, nextMarkdown),
-        onUpdateBoardCardTitle: (title) => props.onUpdateBoardCardTitle(props.boardBundle.board.id, card.id, title),
-      })}
-
-      {!isBoardCard ? (
-        <button
-          type="button"
-          className="resize-handle"
-          aria-label="Resize card"
-          onMouseDown={(event) => props.onStartResize(card, event)}
+      {!isBoardCard && isHovered && !isSelected ? (
+        <div
+          className="hover-resize-indicator"
+          onMouseDown={(event) => {
+            event.stopPropagation();
+            props.onStartResize(card, event);
+          }}
         />
       ) : null}
-      </div>
+
+      {!isBoardCard && isSelected ? (
+        <div
+          className="resize-handle"
+          onMouseDown={(event) => {
+            event.stopPropagation();
+            props.onStartResize(card, event);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1509,11 +1504,12 @@ function CardRenderer(props: CardRendererProps) {
 function FormatBar(props: {
   markdown: string;
   onUpdateMarkdown: (markdown: string) => void;
+  textareaRef: React.RefObject<HTMLTextAreaElement | null>;
 }) {
-  const { markdown, onUpdateMarkdown } = props;
+  const { markdown, onUpdateMarkdown, textareaRef } = props;
 
   const wrapSelection = (before: string, after: string) => {
-    const textarea = document.querySelector<HTMLTextAreaElement>(".card-textarea");
+    const textarea = textareaRef.current;
     if (!textarea) {
       return;
     }
@@ -1529,7 +1525,7 @@ function FormatBar(props: {
   };
 
   const insertLinePrefix = (prefix: string) => {
-    const textarea = document.querySelector<HTMLTextAreaElement>(".card-textarea");
+    const textarea = textareaRef.current;
     if (!textarea) {
       return;
     }

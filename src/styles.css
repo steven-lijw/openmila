@@ -382,18 +382,6 @@ button {
   flex-direction: column;
 }
 
-.canvas-card-content .connection-dot {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: #c3c7cd;
-  border: 1px solid #b6bac1;
-  cursor: crosshair;
-  z-index: 15;
-}
 
 .canvas-card.type-board {
   border: none;
@@ -417,36 +405,56 @@ button {
   box-shadow: 0 1px 2px rgba(51, 61, 78, 0.25);
 }
 
-.connection-dot {
+/* Connect handle — small white circle, top-right corner, selected only */
+.connect-handle {
   position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: #c3c7cd;
-  border: 1px solid #b6bac1;
+  top: -5px;
+  right: -5px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1.5px solid var(--color-border);
   cursor: crosshair;
-  z-index: 15;
+  z-index: 20;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
 }
 
-.resize-handle {
+/* Hover resize indicator — diagonal stripes, bottom-right corner */
+.hover-resize-indicator {
   position: absolute;
-  right: 6px;
-  bottom: 6px;
+  right: 3px;
+  bottom: 3px;
   width: 14px;
   height: 14px;
-  border-style: solid;
-  border-width: 0 2px 2px 0;
-  border-color: var(--color-text-faint);
-  background: transparent;
-  padding: 0;
   cursor: nwse-resize;
-  opacity: 0.7;
+  background-image: repeating-linear-gradient(
+    135deg,
+    var(--color-text-faint) 0px,
+    var(--color-text-faint) 1.5px,
+    transparent 1.5px,
+    transparent 4px
+  );
+  opacity: 0.5;
 }
 
-.canvas-card:hover .resize-handle {
-  opacity: 1;
+/* Resize handle — selected state, bottom-right */
+.resize-handle {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  background-image: repeating-linear-gradient(
+    135deg,
+    var(--color-text-faint) 0px,
+    var(--color-text-faint) 1.5px,
+    transparent 1.5px,
+    transparent 4px
+  );
+  opacity: 0.7;
+  z-index: 20;
 }
 
 .canvas-card.selected {
@@ -629,8 +637,6 @@ button {
 }
 
 .card-textarea,
-.link-fields input,
-.link-fields textarea,
 .todo-text-input {
   width: 100%;
   border: none;
@@ -652,8 +658,19 @@ button {
   cursor: text;
 }
 
-.card-textarea,
-.link-fields textarea {
+.link-url-input {
+  width: 100%;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 2px 0;
+  color: var(--color-text);
+  outline: none;
+  font-size: inherit;
+  font-family: inherit;
+}
+
+.card-textarea {
   min-height: 0;
   resize: none;
   flex: 1;
@@ -661,8 +678,7 @@ button {
 }
 
 .card-textarea::placeholder,
-.link-fields input::placeholder,
-.link-fields textarea::placeholder,
+.link-url-input::placeholder,
 .todo-text-input::placeholder {
   color: var(--color-text-faint);
 }
@@ -672,6 +688,8 @@ button {
   color: var(--color-text-muted);
   line-height: 1.5;
   flex: 1;
+  overflow: auto;
+  min-height: 0;
 }
 
 .card-preview-empty {
@@ -713,6 +731,11 @@ button {
   color: var(--color-text);
 }
 
+.markdown-body h1 { font-size: 1.25em; }
+.markdown-body h2 { font-size: 1.15em; }
+.markdown-body h3 { font-size: 1.05em; }
+.markdown-body h4 { font-size: 1em; }
+
 .markdown-body blockquote {
   border-left: 3px solid var(--color-border);
   padding-left: 10px;
@@ -723,6 +746,35 @@ button {
 .markdown-body a {
   color: var(--color-primary);
   text-decoration: underline;
+  pointer-events: auto;
+}
+
+.card-preview.markdown-body {
+  white-space: normal;
+}
+
+.markdown-body hr {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: 6px 0;
+}
+
+.markdown-body img {
+  max-width: 100%;
+  height: auto;
+}
+
+.markdown-body pre {
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 4px;
+  padding: 6px 8px;
+  overflow-x: auto;
+  margin: 0 0 4px;
+}
+
+.markdown-body pre code {
+  background: none;
+  padding: 0;
 }
 
 .todo-list {
@@ -740,14 +792,6 @@ button {
 .todo-item input[type="checkbox"] {
   margin: 0;
   accent-color: var(--color-primary);
-}
-
-.link-fields {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  flex: 1;
-  min-height: 0;
 }
 
 .image-card-body {
