@@ -79,6 +79,7 @@ interface ResizingCardState {
   startPointer: Point;
   startSize: { width: number; height: number };
   size: { width: number; height: number };
+  aspectRatio: number;
 }
 
 function readDragPayload(event: DragEvent): DragToolPayload | DragCardPayload | null {
@@ -449,7 +450,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
       case "board":
         return { width: 180, height: 120 };
       case "image":
-        return { width: 280, height: 220 };
+        return { width: 280, height: 210 };
       case "file":
         return { width: 320, height: 260 };
       case "column":
@@ -708,12 +709,39 @@ export function CanvasBoard(props: CanvasBoardProps) {
 
       const rc = resizingCardRef.current;
       if (rc) {
-        const minSize = getMinSize(rootCardMap[rc.cardId]);
-        const nextWidth = Math.max(minSize.width, rc.startSize.width + (point.x - rc.startPointer.x));
-        const nextHeight = Math.max(minSize.height, rc.startSize.height + (point.y - rc.startPointer.y));
-        setResizingCard((current) =>
-          current ? { ...current, size: { width: nextWidth, height: nextHeight } } : null,
-        );
+        const card = rootCardMap[rc.cardId];
+        const minSize = getMinSize(card);
+        const dx = point.x - rc.startPointer.x;
+        const dy = point.y - rc.startPointer.y;
+
+        if (card?.type === "image") {
+          const ar = rc.aspectRatio;
+          let nextWidth: number;
+          let nextHeight: number;
+          if (Math.abs(dx) / ar >= Math.abs(dy)) {
+            nextWidth = rc.startSize.width + dx;
+            nextHeight = nextWidth / ar;
+          } else {
+            nextHeight = rc.startSize.height + dy;
+            nextWidth = nextHeight * ar;
+          }
+          nextWidth = Math.max(minSize.width, nextWidth);
+          nextHeight = Math.max(minSize.height, nextHeight);
+          if (nextWidth / nextHeight > ar) {
+            nextWidth = nextHeight * ar;
+          } else {
+            nextHeight = nextWidth / ar;
+          }
+          setResizingCard((current) =>
+            current ? { ...current, size: { width: nextWidth, height: nextHeight } } : null,
+          );
+        } else {
+          const nextWidth = Math.max(minSize.width, rc.startSize.width + dx);
+          const nextHeight = Math.max(minSize.height, rc.startSize.height + dy);
+          setResizingCard((current) =>
+            current ? { ...current, size: { width: nextWidth, height: nextHeight } } : null,
+          );
+        }
       }
     };
 
@@ -1229,6 +1257,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
                     startPointer: screenToCanvas(event.clientX, event.clientY),
                     startSize: cardMeta.size,
                     size: cardMeta.size,
+                    aspectRatio: cardMeta.size.width / cardMeta.size.height,
                   });
                 }}
               />
@@ -1367,12 +1396,12 @@ function CardRenderer(props: CardRendererProps) {
   return (
     <div
       ref={cardRef}
-      className={`canvas-card ${isSelected ? "selected" : ""} ${isBoardCard ? "type-board" : ""} ${props.isDragging ? "dragging" : ""} ${isBoardCard && card.cardColor ? "has-color" : ""}`}
+      className={`canvas-card ${isSelected ? "selected" : ""} ${isBoardCard ? "type-board" : `type-${card.type}`} ${props.isDragging ? "dragging" : ""} ${isBoardCard && card.cardColor ? "has-color" : ""}`}
       style={{
         left: props.displayPosition.x,
         top: props.displayPosition.y,
         ...(isBoardCard ? {} : { width: props.displaySize.width, height: props.displaySize.height }),
-        ...(card.cardColor ? { backgroundColor: card.cardColor } : {}),
+        ...(card.cardColor && card.type !== "image" ? { backgroundColor: card.cardColor } : {}),
       }}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
@@ -1425,7 +1454,7 @@ function CardRenderer(props: CardRendererProps) {
         }
       }}
     >
-      {isHovered && !isEditing ? (
+      {isHovered && !isEditing && card.type !== "image" ? (
         <div className="color-bar">
           {CARD_COLORS.map((colorDef) => (
             <button

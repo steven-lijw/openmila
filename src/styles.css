@@ -373,6 +373,13 @@ button {
   contain: layout style;
 }
 
+.canvas-card.type-image {
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
 .canvas-card-content {
   overflow: hidden;
   flex: 1;
@@ -795,7 +802,9 @@ button {
 }
 
 .image-card-body {
-  min-height: 150px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
 }
 
 .file-card-body {
@@ -840,9 +849,9 @@ button {
 
 .image-preview {
   width: 100%;
-  height: auto;
+  height: 100%;
   border-radius: 0;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .file-preview-frame,

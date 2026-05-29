@@ -299,6 +299,21 @@ export function useWorkspaceController() {
     const bundle = getBoard(latestState, input.boardId);
     const creation = createCardCreationResult(latestState.workspace, bundle, input.type, input.position);
     const assetPath = await vaultRef.current.importAsset(boardPath, input.file);
+
+    let imageSize: { width: number; height: number } | undefined;
+    if (input.type === "image") {
+      const bitmap = await createImageBitmap(input.file);
+      const maxW = 800, maxH = 600;
+      let w = bitmap.width, h = bitmap.height;
+      if (w > maxW || h > maxH) {
+        const scale = Math.min(maxW / w, maxH / h);
+        w = Math.round(w * scale);
+        h = Math.round(h * scale);
+      }
+      bitmap.close();
+      imageSize = { width: w, height: h };
+    }
+
     const nextBundle = replaceBoardBundle(
       creation.boardBundle,
       patchCard(creation.boardBundle.board, creation.createdCardId, (card) =>
@@ -307,6 +322,7 @@ export function useWorkspaceController() {
               ...card,
               assetPath,
               title: input.file.name,
+              ...(imageSize ? { size: imageSize } : {}),
             }
           : card.type === "file"
             ? {
