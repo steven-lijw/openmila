@@ -865,6 +865,11 @@ button {
   visibility: hidden;
 }
 
+.canvas-board.is-resizing .file-preview-frame,
+.canvas-board.is-resizing .file-preview-media {
+  visibility: hidden;
+}
+
 
 .file-preview-audio {
   width: 100%;
