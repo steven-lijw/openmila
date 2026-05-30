@@ -706,7 +706,7 @@ button {
 
 .card-preview {
   white-space: pre-wrap;
-  color: var(--color-text-muted);
+  color: var(--color-text);
   line-height: 1.5;
   flex: 1;
   overflow: auto;
@@ -837,12 +837,20 @@ button {
   border-color: var(--color-primary);
 }
 
+.todo-list-preview {
+  color: var(--color-text);
+}
+
 .todo-text-preview {
   font-size: inherit;
   color: inherit;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.todo-text-preview.empty {
+  color: var(--color-text-faint);
 }
 
 .image-card-body {

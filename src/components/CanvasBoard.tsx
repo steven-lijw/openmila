@@ -149,7 +149,7 @@ function renderEditableContent(input: {
           {items.map((item) => (
             <div key={item.id} className="todo-item todo-item-preview">
               <span className={`todo-checkbox-preview${item.checked ? " checked" : ""}`} />
-              <span className="todo-text-preview">{item.text || "New task"}</span>
+              <span className={`todo-text-preview${item.text ? "" : " empty"}`}>{item.text || "New task"}</span>
             </div>
           ))}
         </div>
@@ -428,6 +428,11 @@ export function CanvasBoard(props: CanvasBoardProps) {
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState<Point | null>(null);
   const [draggingCard, setDraggingCard] = useState<DraggingCardState | null>(null);
+  const pendingDragRef = useRef<{
+    cardIds: string[];
+    startPointer: Point;
+    startPositions: Record<string, Point>;
+  } | null>(null);
   const [connectionPreview, setConnectionPreview] = useState<ConnectionPreviewState | null>(null);
   const [selectionBox, setSelectionBox] = useState<SelectionBoxState | null>(null);
   const [committedPositions, setCommittedPositions] = useState<Record<string, Point>>({});
@@ -666,14 +671,22 @@ export function CanvasBoard(props: CanvasBoardProps) {
   committedPositionsRef.current = committedPositions;
   rootCardsRef.current = rootCards;
 
-  const hasActiveInteraction = draggingCard || connectionPreview || selectionBox || resizingCard;
-
   useEffect(() => {
-    if (!hasActiveInteraction) {
-      return;
-    }
-
     const handleMouseMove = (event: globalThis.MouseEvent) => {
+      if (!draggingCardRef.current && !connectionPreviewRef.current &&
+          !selectionBoxRef.current && !resizingCardRef.current &&
+          !pendingDragRef.current) return;
+      // Promote pending drag on first mouse movement
+      if (pendingDragRef.current && !draggingCardRef.current) {
+        const pending = pendingDragRef.current;
+        pendingDragRef.current = null;
+        setDraggingCard({
+          ...pending,
+          positions: { ...pending.startPositions },
+        });
+        return;
+      }
+
       const point = screenToCanvas(event.clientX, event.clientY);
       const dc = draggingCardRef.current;
 
@@ -746,6 +759,18 @@ export function CanvasBoard(props: CanvasBoardProps) {
     };
 
     const handleMouseUp = () => {
+      if (!draggingCardRef.current && !connectionPreviewRef.current &&
+          !selectionBoxRef.current && !resizingCardRef.current &&
+          !pendingDragRef.current) return;
+
+      // Promote pending drag (click with no movement) so it gets cleaned up
+      if (pendingDragRef.current && !draggingCardRef.current) {
+        const pending = pendingDragRef.current;
+        pendingDragRef.current = null;
+        setDraggingCard({ ...pending, positions: { ...pending.startPositions } });
+      }
+      pendingDragRef.current = null;
+
       const dc = draggingCardRef.current;
       const sb = selectionBoxRef.current;
       const cp = connectionPreviewRef.current;
@@ -804,7 +829,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [hasActiveInteraction, props, rootCardMap]);
+  }, [props, rootCardMap]);
 
   // Escape to exit edit mode
   useEffect(() => {
@@ -1232,7 +1257,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
 
                   props.onBringCardsToFront(movableIds);
 
-                  setDraggingCard({
+                  pendingDragRef.current = {
                     cardIds: movableIds,
                     startPointer: screenToCanvas(event.clientX, event.clientY),
                     startPositions: Object.fromEntries(
@@ -1241,13 +1266,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
                         committedPositions[selectedId] ?? rootCardMap[selectedId].position,
                       ]),
                     ),
-                    positions: Object.fromEntries(
-                      movableIds.map((selectedId) => [
-                        selectedId,
-                        committedPositions[selectedId] ?? rootCardMap[selectedId].position,
-                      ]),
-                    ),
-                  });
+                  };
                 }}
                 onStartResize={(cardMeta, event) => {
                   event.preventDefault();

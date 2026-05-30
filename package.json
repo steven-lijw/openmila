@@ -1,6 +1,6 @@
 {
   "name": "openmila",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A local-first Milanote-like canvas app — runs entirely in your browser, stores data in your local filesystem.",
   "type": "module",
   "bin": {
@@ -9,6 +9,7 @@
   "files": [
     "dist",
     "bin",
+    "lib",
     "README.md",
     "LICENSE"
   ],
@@ -33,11 +34,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/YOUR_USERNAME/openmila.git"
+    "url": "git+https://github.com/steven-lijw/openmila.git"
   },
-  "homepage": "https://github.com/YOUR_USERNAME/openmila#readme",
+  "homepage": "https://github.com/steven-lijw/openmila#readme",
   "bugs": {
-    "url": "https://github.com/YOUR_USERNAME/openmila/issues"
+    "url": "https://github.com/steven-lijw/openmila/issues"
   },
   "license": "MIT",
   "keywords": [
