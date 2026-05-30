@@ -1454,7 +1454,11 @@ function CardRenderer(props: CardRendererProps) {
         event.stopPropagation();
         if (card.type === "link" && !event.shiftKey) {
           if (isSelected) {
-            window.open(card.url, "_blank");
+            if (card.url) {
+              window.open(card.url, "_blank");
+            } else {
+              props.onStartEditing();
+            }
           } else {
             props.onSelectCard(card.id, false);
           }
