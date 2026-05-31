@@ -474,9 +474,10 @@ export function CanvasBoard(props: CanvasBoardProps) {
 
   const getEdgeCenter = (card: CardMeta, position: Point) => {
     if (card.type === "board") {
+      const pad = card.cardColor ? 8 : 0;
       return {
-        x: position.x + 30,
-        y: position.y + 20,
+        x: position.x + pad + 20,
+        y: position.y + pad + 20,
       };
     }
     const size = getDisplaySize(card);
@@ -489,14 +490,14 @@ export function CanvasBoard(props: CanvasBoardProps) {
   // Returns where a line from (fromX, fromY) to the card center hits the card's edge
   const getEdgeEndpoint = (card: CardMeta, cardPosition: Point, fromX: number, fromY: number) => {
     const center = card.type === "board"
-      ? { x: cardPosition.x + 30, y: cardPosition.y + 20 }
+      ? { x: cardPosition.x + (card.cardColor ? 8 : 0) + 20, y: cardPosition.y + (card.cardColor ? 8 : 0) + 20 }
       : { x: cardPosition.x + getDisplaySize(card).width / 2, y: cardPosition.y + getDisplaySize(card).height / 2 };
 
     const dx = center.x - fromX;
     const dy = center.y - fromY;
     if (Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001) return center;
 
-    // Use visual bounding box: board cards show as ~40x40 icon centered at (pos.x+50, pos.y+20)
+    // Use visual bounding box: board cards show as 40x40 icon
     const halfW = card.type === "board" ? 20 : getDisplaySize(card).width / 2;
     const halfH = card.type === "board" ? 20 : getDisplaySize(card).height / 2;
 
