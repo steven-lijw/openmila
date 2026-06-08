@@ -130,6 +130,8 @@ async function verifyPermission(handle: FileSystemDirectoryHandle): Promise<bool
 }
 
 export class BrowserFsVault {
+  private writeQueues = new Map<string, Promise<void>>();
+
   constructor(private readonly rootHandle: FileSystemDirectoryHandle) {}
 
   static async openVaultPicker(): Promise<BrowserFsVault> {
@@ -236,6 +238,13 @@ export class BrowserFsVault {
   }
 
   async saveBoardBundle(boardPath: string, bundle: BoardBundle): Promise<void> {
+    const prev = this.writeQueues.get(boardPath) ?? Promise.resolve();
+    const next = prev.then(() => this._saveBoardBundle(boardPath, bundle));
+    this.writeQueues.set(boardPath, next);
+    await next;
+  }
+
+  private async _saveBoardBundle(boardPath: string, bundle: BoardBundle): Promise<void> {
     await getDirectoryHandleByPath(this.rootHandle, boardPath, true);
     await writeJsonFileAtPath(this.rootHandle, `${boardPath}/board.json`, bundle.board);
     await getDirectoryHandleByPath(this.rootHandle, `${boardPath}/cards`, true);
@@ -270,7 +279,12 @@ export class BrowserFsVault {
     }
     const sourceDir = await getDirectoryHandleByPath(this.rootHandle, fromPath, false);
     const destDir = await getDirectoryHandleByPath(this.rootHandle, toPath, true);
-    await copyDirectoryContents(sourceDir, destDir);
+    try {
+      await copyDirectoryContents(sourceDir, destDir);
+    } catch (err) {
+      // Copy failed — do not remove the source directory to avoid data loss
+      throw err;
+    }
     await removeEntryByPath(this.rootHandle, fromPath, true);
   }
 
@@ -281,6 +295,7 @@ export class BrowserFsVault {
     const payloadDir = await ensureDirectory(entryDir, "payload");
     const metaItems: TrashItem[] = [];
 
+    const errors: string[] = [];
     for (let index = 0; index < items.length; index += 1) {
       const item = items[index];
       const payloadName = String(index);
@@ -300,8 +315,8 @@ export class BrowserFsVault {
           payloadName,
           kind: item.kind,
         });
-      } catch {
-        // Ignore missing files or permission issues while trashing.
+      } catch (err) {
+        errors.push(item.path);
       }
     }
 
@@ -310,6 +325,9 @@ export class BrowserFsVault {
       deletedAt: new Date().toISOString(),
       items: metaItems,
     };
+    if (metaItems.length === 0 && errors.length > 0) {
+      throw new Error(`Failed to trash all ${errors.length} item(s): ${errors[0]}`);
+    }
     await writeJsonFileAtPath(this.rootHandle, `${TRASH_DIRECTORY}/${entryId}/meta.json`, meta);
     await this.pruneTrash(TRASH_LIMIT);
     return entryId;

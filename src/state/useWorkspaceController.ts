@@ -207,10 +207,12 @@ export function useWorkspaceController() {
 
     const timeoutId = window.setTimeout(async () => {
       try {
+        const latest = stateRef.current;
+        if (!latest.workspace) return;
         setState((current) => ({ ...current, isSaving: true }));
-        const boardPaths = buildBoardPathMap(state.boards, state.workspace!);
-        await vaultRef.current!.saveWorkspace(state.workspace!);
-        for (const [boardId, bundle] of Object.entries(state.boards)) {
+        const boardPaths = buildBoardPathMap(latest.boards, latest.workspace);
+        await vaultRef.current!.saveWorkspace(latest.workspace);
+        for (const [boardId, bundle] of Object.entries(latest.boards)) {
           const boardPath = boardPaths[boardId];
           if (!boardPath) {
             continue;
@@ -230,7 +232,7 @@ export function useWorkspaceController() {
     }, 300);
 
     return () => window.clearTimeout(timeoutId);
-  }, [setError, state.boards, state.hasUnsavedChanges, state.workspace]);
+  }, [setError, state.hasUnsavedChanges, state.workspace]);
 
   const currentBoard = useMemo(() => {
     if (!state.currentBoardId) {
@@ -493,7 +495,17 @@ export function useWorkspaceController() {
         if (parentPath) {
           const oldPath = `${parentPath}/boards/${oldSlug}`;
           const newPath = `${parentPath}/boards/${newSlug}`;
-          void vaultRef.current.moveDirectory(oldPath, newPath).catch(setError);
+          void vaultRef.current.moveDirectory(oldPath, newPath).catch((err) => {
+            // Revert slug on failure
+            setError(err);
+            setState((current) => ({
+              ...current,
+              boards: {
+                ...current.boards,
+                [card.childBoardId]: latestState.boards[card.childBoardId] ?? current.boards[card.childBoardId],
+              },
+            }));
+          });
         }
       }
       nextBundle = {
@@ -636,15 +648,20 @@ export function useWorkspaceController() {
       hasUnsavedChanges: true,
     }));
 
+    // Create trash entry synchronously before persisting, so files are recoverable
+    let trashEntryId: string | undefined;
+    if (vaultRef.current && trashItems.length > 0) {
+      try {
+        trashEntryId = await vaultRef.current.createTrashEntry(trashItems);
+      } catch (error) {
+        setError(error);
+      }
+    }
+
     void persistStateSnapshot({
       workspace: nextWorkspace,
       boards: nextBoards,
     }).catch(setError);
-
-    // Move files to trash asynchronously so the UI updates immediately
-    if (vaultRef.current && trashItems.length > 0) {
-      void vaultRef.current.createTrashEntry(trashItems).catch(setError);
-    }
   }, [persistStateSnapshot, pushUndo, setError]);
 
   useEffect(() => {
@@ -812,7 +829,18 @@ export function useWorkspaceController() {
         ? boardPaths[currentBoard.board.parentBoardId]
         : null;
       const newPath = parentPath ? `${parentPath}/boards/${newSlug}` : `boards/${newSlug}`;
-      void vaultRef.current.moveDirectory(oldPath, newPath).catch(setError);
+      void vaultRef.current.moveDirectory(oldPath, newPath).catch((err) => {
+        setError(err);
+        // Revert to previous board state on failure
+        setState((current) => ({
+          ...current,
+          boards: {
+            ...current.boards,
+            [currentBoard.board.id]: currentBoard,
+          },
+          workspace: state.workspace,
+        }));
+      });
     }
     updateWorkspaceAndBoards({
       workspace: nextWorkspace,

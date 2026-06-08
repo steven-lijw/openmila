@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getLinkPreview } from "../core/linkPreview";
 import { fetchPageMeta, type PageMeta } from "../core/fetchMeta";
 
@@ -16,25 +16,34 @@ function isYouTubeUrl(url: string): boolean {
 }
 
 export function LinkPreviewDisplay({ url }: Props) {
-  const [syncPreview] = useState(() => getLinkPreview(url));
+  const [syncPreview, setSyncPreview] = useState(() => getLinkPreview(url));
   const [meta, setMeta] = useState<PageMeta | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    if (!url) return;
+    // Reset sync preview when URL changes
+    setSyncPreview(getLinkPreview(url));
     setMeta(null);
 
+    // Cancel any in-flight fetch
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    if (!url) return;
+
     if (isYouTubeUrl(url)) {
-      // YouTube oEmbed is CORS-allowed from the browser
       fetch(
         `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`,
+        { signal: controller.signal },
       )
         .then((r) => (r.ok ? r.json() : null))
         .then((data) => {
-          if (data?.title) {
+          if (!controller.signal.aborted && data?.title) {
             setMeta({
               title: data.title,
               description: data.author_name ?? null,
-              image: null, // keep the sync img.youtube.com thumbnail
+              image: null,
             });
           }
         })
@@ -42,10 +51,11 @@ export function LinkPreviewDisplay({ url }: Props) {
       return;
     }
 
-    // Non-YouTube: fetch metadata from our /api/meta endpoint
     fetchPageMeta(url).then((result) => {
-      if (result) setMeta(result);
+      if (!controller.signal.aborted && result) setMeta(result);
     });
+
+    return () => { controller.abort(); };
   }, [url]);
 
   if (!syncPreview) {

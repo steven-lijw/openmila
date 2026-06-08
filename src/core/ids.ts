@@ -1,5 +1,5 @@
 export function createId(prefix: string): string {
-  const randomPart = Math.random().toString(36).slice(2, 10);
+  const randomPart = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
   return `${prefix}_${randomPart}`;
 }
 

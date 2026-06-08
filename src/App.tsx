@@ -102,7 +102,9 @@ export default function App() {
           </div>
         ) : null}
 
-        {controller.currentBoard ? (
+        {controller.currentBoard ? (() => {
+          const currentBoardId = controller.currentBoard.board.id;
+          return (
           <CanvasBoard
             boardBundle={controller.currentBoard}
             selectedCardIds={controller.state.selectedCardIds}
@@ -111,20 +113,20 @@ export default function App() {
             readAssetUrl={controller.readAssetUrl}
             onCanvasCreate={(toolType, position) => {
               void controller.createCardFromTool(toolType, position, {
-                boardId: controller.currentBoard!.board.id,
+                boardId: currentBoardId,
               });
             }}
             onSelectCard={controller.selectCard}
             onClearSelection={controller.clearSelection}
-            onUpdateCard={(cardId, updater) => controller.updateCard(controller.currentBoard!.board.id, cardId, updater)}
+            onUpdateCard={(cardId, updater) => controller.updateCard(currentBoardId, cardId, updater)}
             onUpdateMarkdown={(cardId, markdown) =>
-              controller.updateCardMarkdown(controller.currentBoard!.board.id, cardId, markdown)
+              controller.updateCardMarkdown(currentBoardId, cardId, markdown)
             }
             onUpdateBoardCardTitle={(boardId, cardId, title) =>
               controller.updateBoardCardTitle(boardId, cardId, title)
             }
             onBringCardsToFront={(cardIds) =>
-              controller.bringCardsToFront(controller.currentBoard!.board.id, cardIds)
+              controller.bringCardsToFront(currentBoardId, cardIds)
             }
             onMoveToBoard={(payload, boardId, position) =>
               controller.moveCardByDrag(payload, {
@@ -134,20 +136,21 @@ export default function App() {
             }
             onStartConnection={controller.startConnection}
             onCancelConnection={controller.cancelConnection}
-            onFinishConnection={(cardId) => controller.finishConnection(controller.currentBoard!.board.id, cardId)}
+            onFinishConnection={(cardId) => controller.finishConnection(currentBoardId, cardId)}
             onDeleteEdge={(edgeId) => controller.deleteEdge(edgeId)}
             onUpdateEdge={(edgeId, updater) => controller.updateEdge(edgeId, updater)}
             onOpenBoard={controller.openChildBoard}
-            onViewportChange={(viewport) => controller.setViewport(controller.currentBoard!.board.id, viewport)}
+            onViewportChange={(viewport) => controller.setViewport(currentBoardId, viewport)}
             onDropExternalFiles={(files, position) =>
               controller.importExternalFiles({
-                boardId: controller.currentBoard!.board.id,
+                boardId: currentBoardId,
                 files,
                 startPosition: position,
               })
             }
           />
-        ) : null}
+          );
+        })() : null}
       </main>
     </div>
   );

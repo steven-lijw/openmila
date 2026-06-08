@@ -419,7 +419,6 @@ function TodoList(props: {
 
 export function CanvasBoard(props: CanvasBoardProps) {
   const canvasRef = useRef<HTMLDivElement | null>(null);
-  const canvasInnerRef = useRef<HTMLDivElement | null>(null);
   const ignoreNextCanvasClickRef = useRef(false);
   const propsRef = useRef(props);
   propsRef.current = props;
@@ -515,16 +514,28 @@ export function CanvasBoard(props: CanvasBoardProps) {
     };
   };
 
+  const loadedAssetIdsRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
+    loadedAssetIdsRef.current.clear();
+  }, [props.boardBundle.board.id]);
+
+  useEffect(() => {
+    const boardId = props.boardBundle.board.id;
     for (const card of props.boardBundle.board.cards) {
-      if ((card.type !== "image" && card.type !== "file") || !card.assetPath || assetUrls[card.id]) {
+      if ((card.type !== "image" && card.type !== "file") || !card.assetPath || loadedAssetIdsRef.current.has(card.id)) {
         continue;
       }
-      void props.readAssetUrl(props.boardBundle.board.id, card.assetPath).then((url) => {
+      loadedAssetIdsRef.current.add(card.id);
+      void props.readAssetUrl(boardId, card.assetPath).then((url) => {
+        if (propsRef.current.boardBundle.board.id !== boardId) {
+          URL.revokeObjectURL(url);
+          return;
+        }
         setAssetUrls((current) => ({ ...current, [card.id]: url }));
       });
     }
-  }, [assetUrls, props.boardBundle.board.cards, props.boardBundle.board.id, props.readAssetUrl]);
+  }, [props.boardBundle.board.cards, props.boardBundle.board.id, props.readAssetUrl]);
 
   useEffect(() => {
     setAssetUrls((current) => {
@@ -628,14 +639,15 @@ export function CanvasBoard(props: CanvasBoardProps) {
     const x = rect.width / 2 - cx * zoom;
     const y = rect.height / 2 - cy * zoom;
 
-    props.onViewportChange({ x, y, zoom });
-  }, [committedPositions, props, rootCards]);
+    propsRef.current.onViewportChange({ x, y, zoom });
+  }, [committedPositions, rootCards]);
 
   const focusSelected = useCallback(() => {
-    if (props.selectedCardIds.length === 0) {
+    const p = propsRef.current;
+    if (p.selectedCardIds.length === 0) {
       return;
     }
-    const cardId = props.selectedCardIds[0];
+    const cardId = p.selectedCardIds[0];
     const card = rootCardMap[cardId];
     if (!card) {
       return;
@@ -656,8 +668,8 @@ export function CanvasBoard(props: CanvasBoardProps) {
     const x = rect.width / 2 - cx * zoom;
     const y = rect.height / 2 - cy * zoom;
 
-    props.onViewportChange({ x, y, zoom });
-  }, [committedPositions, props, rootCardMap]);
+    propsRef.current.onViewportChange({ x, y, zoom });
+  }, [committedPositions, rootCardMap]);
 
   const draggingCardRef = useRef(draggingCard);
   const connectionPreviewRef = useRef(connectionPreview);
@@ -784,7 +796,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
         if (didMove) {
           setCommittedPositions((current) => ({ ...current, ...dc.positions }));
           for (const [cardId, position] of Object.entries(dc.positions)) {
-            props.onUpdateCard(cardId, (card) => ({ ...card, position }));
+            propsRef.current.onUpdateCard(cardId, (card) => ({ ...card, position }));
           }
         }
       }
@@ -806,18 +818,18 @@ export function CanvasBoard(props: CanvasBoardProps) {
           })
           .map((card) => card.id);
 
-        props.onClearSelection();
-        selectedIds.forEach((cardId, index) => props.onSelectCard(cardId, index > 0));
+        propsRef.current.onClearSelection();
+        selectedIds.forEach((cardId, index) => propsRef.current.onSelectCard(cardId, index > 0));
         setSelectionBox(null);
       }
 
       if (cp) {
-        props.onCancelConnection();
+        propsRef.current.onCancelConnection();
         setConnectionPreview(null);
       }
 
       if (rc) {
-        props.onUpdateCard(rc.cardId, (card) => ({ ...card, size: rc.size }));
+        propsRef.current.onUpdateCard(rc.cardId, (card) => ({ ...card, size: rc.size }));
         setResizingCard(null);
       }
 
@@ -830,7 +842,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [props, rootCardMap]);
+  }, [rootCardMap]);
 
   // Escape to exit edit mode
   useEffect(() => {
@@ -1092,7 +1104,6 @@ export function CanvasBoard(props: CanvasBoardProps) {
       >
         <div
           className="canvas-inner"
-          ref={canvasInnerRef}
           style={viewportStyle}
           onDragOver={handleCanvasDragOver}
           onDrop={handleCanvasDrop}

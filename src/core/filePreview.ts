@@ -44,7 +44,7 @@ export function getFilePreviewMeta(input: { fileName: string; mimeType: string }
     return {
       extension,
       label: extension.toUpperCase(),
-      canRenderInline: true,
+      canRenderInline: false,
       kind: "document",
     };
   }
@@ -53,7 +53,7 @@ export function getFilePreviewMeta(input: { fileName: string; mimeType: string }
     return {
       extension,
       label: extension.toUpperCase(),
-      canRenderInline: true,
+      canRenderInline: false,
       kind: "presentation",
     };
   }
