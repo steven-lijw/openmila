@@ -7,6 +7,16 @@ interface FileSystemHandle {
   requestPermission?(descriptor?: FileSystemPermissionDescriptor): Promise<PermissionState>;
 }
 
+interface FileSystemDirectoryHandle {
+  // Some TS lib versions don't include the async iteration helpers on
+  // FileSystemDirectoryHandle. Declare them so the rest of the codebase can
+  // use `.entries()` without per-call type errors.
+  entries(): AsyncIterableIterator<[string, FileSystemHandle]>;
+  values(): AsyncIterableIterator<FileSystemHandle>;
+  keys(): AsyncIterableIterator<string>;
+  [Symbol.asyncIterator](): AsyncIterableIterator<[string, FileSystemHandle]>;
+}
+
 interface Window {
   showDirectoryPicker(options?: {
     mode?: "read" | "readwrite";
