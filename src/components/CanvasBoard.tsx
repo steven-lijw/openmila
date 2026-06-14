@@ -51,7 +51,7 @@ interface CardRendererProps {
   onFinishConnection: (cardId: string) => void;
   onOpenBoard: (childBoardId: string) => void;
   onStartPointerDrag: (card: CardMeta, event: MouseEvent<HTMLDivElement>) => void;
-  onStartResize: (card: CardMeta, event: MouseEvent<HTMLButtonElement>) => void;
+  onStartResize: (card: CardMeta, event: MouseEvent<HTMLElement>) => void;
   editingCardId: string | null;
   onStartEditing: () => void;
 }
@@ -146,8 +146,8 @@ function renderEditableContent(input: {
     if (!isEditable) {
       return (
         <div className="todo-list todo-list-preview">
-          {items.map((item) => (
-            <div key={item.id} className="todo-item todo-item-preview">
+          {items.map((item, index) => (
+            <div key={`todo-preview-${index}`} className="todo-item todo-item-preview">
               <span className={`todo-checkbox-preview${item.checked ? " checked" : ""}`} />
               <span className={`todo-text-preview${item.text ? "" : " empty"}`}>{item.text || "New task"}</span>
             </div>
@@ -334,6 +334,24 @@ function TodoList(props: {
   const [focusNonce, setFocusNonce] = useState(0);
   const focusRetryRef = useRef(0);
 
+  // Stable per-slot React keys. `parseTodoMarkdown` derives ids from the text
+  // content, which would change the key on every keystroke and unmount/remount
+  // the input (losing focus and IME state). Instead we keep an array of opaque
+  // keys positioned by index; they only change on insert/remove.
+  const slotKeysRef = useRef<string[]>(items.map(() => createId("todoslot")));
+  if (slotKeysRef.current.length < items.length) {
+    // Items were added outside of a handler we instrumented (e.g. initial mount
+    // of a multi-line todo). Append fresh keys for the new tail.
+    const next = slotKeysRef.current.slice();
+    while (next.length < items.length) {
+      next.push(createId("todoslot"));
+    }
+    slotKeysRef.current = next;
+  } else if (slotKeysRef.current.length > items.length) {
+    slotKeysRef.current = slotKeysRef.current.slice(0, items.length);
+  }
+  const slotKeys = slotKeysRef.current;
+
   const requestFocus = (index: number) => {
     pendingFocusIndexRef.current = index;
     focusRetryRef.current = 0;
@@ -370,14 +388,13 @@ function TodoList(props: {
   return (
     <div ref={listRef} className="todo-list">
       {items.map((item, index) => (
-        <label key={item.id} className="todo-item">
+        <label key={slotKeys[index]} className="todo-item">
           <input
             type="checkbox"
             checked={item.checked}
             onChange={(event) => {
-              const nextItems = items.map((entry) =>
-                entry.id === item.id ? { ...entry, checked: event.target.checked } : entry,
-              );
+              const nextItems = items.slice();
+              nextItems[index] = { ...item, checked: event.target.checked };
               onUpdateMarkdown(stringifyTodoMarkdown(nextItems));
             }}
           />
@@ -386,16 +403,22 @@ function TodoList(props: {
             value={item.text}
             placeholder="New task"
             onChange={(event) => {
-              const nextItems = items.map((entry) =>
-                entry.id === item.id ? { ...entry, text: event.target.value } : entry,
-              );
+              const nextItems = items.slice();
+              nextItems[index] = { ...item, text: event.target.value };
               onUpdateMarkdown(stringifyTodoMarkdown(nextItems));
             }}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
                 event.preventDefault();
-                const nextItems = [...items];
+                const nextItems = items.slice();
                 nextItems.splice(index + 1, 0, { id: createId("todo"), checked: false, text: "" });
+                // Insert a fresh slot key at the same position so existing
+                // inputs keep their DOM identity (and focus).
+                slotKeysRef.current = [
+                  ...slotKeys.slice(0, index + 1),
+                  createId("todoslot"),
+                  ...slotKeys.slice(index + 1),
+                ];
                 requestFocus(index + 1);
                 onUpdateMarkdown(stringifyTodoMarkdown(nextItems));
                 return;
@@ -403,9 +426,15 @@ function TodoList(props: {
 
               if ((event.key === "Delete" || event.key === "Backspace") && item.text.trim() === "") {
                 event.preventDefault();
-                const nextItems = items.filter((entry) => entry.id !== item.id);
+                const nextItems = items.filter((_, i) => i !== index);
                 const normalizedItems =
                   nextItems.length === 0 ? [{ id: createId("todo"), checked: false, text: "" }] : nextItems;
+                // Drop the slot key at this index.
+                if (nextItems.length === 0) {
+                  slotKeysRef.current = [createId("todoslot")];
+                } else {
+                  slotKeysRef.current = slotKeys.filter((_, i) => i !== index);
+                }
                 requestFocus(Math.max(index - 1, 0));
                 onUpdateMarkdown(stringifyTodoMarkdown(normalizedItems));
               }
@@ -420,6 +449,7 @@ function TodoList(props: {
 export function CanvasBoard(props: CanvasBoardProps) {
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const ignoreNextCanvasClickRef = useRef(false);
+  const mountedRef = useRef(true);
   const propsRef = useRef(props);
   propsRef.current = props;
   const { onDeleteEdge } = props;
@@ -528,11 +558,18 @@ export function CanvasBoard(props: CanvasBoardProps) {
       }
       loadedAssetIdsRef.current.add(card.id);
       void props.readAssetUrl(boardId, card.assetPath).then((url) => {
-        if (propsRef.current.boardBundle.board.id !== boardId) {
-          URL.revokeObjectURL(url);
+        // Component unmounted, or the user navigated to a different board:
+        // release the blob URL so it doesn't leak, and don't touch state.
+        if (!mountedRef.current || propsRef.current.boardBundle.board.id !== boardId) {
+          if (url) {
+            URL.revokeObjectURL(url);
+          }
           return;
         }
         setAssetUrls((current) => ({ ...current, [card.id]: url }));
+      }).catch(() => {
+        // Asset read failed (file deleted, permission revoked, etc.). Leave
+        // the slot empty — the card will render its placeholder.
       });
     }
   }, [props.boardBundle.board.cards, props.boardBundle.board.id, props.readAssetUrl]);
@@ -545,6 +582,25 @@ export function CanvasBoard(props: CanvasBoardProps) {
       }
       return next;
     });
+  }, [props.boardBundle.board.id]);
+
+  // Mark the component unmounted so in-flight asset promises don't setState.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // When the user navigates to a different board, clear local UI state that is
+  // scoped to the previous board. Otherwise a stale editingCardId / selectedEdgeId
+  // could happen to match a different card in the new board, silently putting it
+  // into edit or selected mode.
+  useEffect(() => {
+    setEditingCardId(null);
+    setSelectedEdgeId(null);
+    setLocalEdgeStyles({});
+    setCommittedPositions({});
   }, [props.boardBundle.board.id]);
 
   useEffect(() => {
@@ -1489,6 +1545,12 @@ function CardRenderer(props: CardRendererProps) {
       }}
       onDoubleClick={(event) => {
         event.stopPropagation();
+        // In connection mode, a double-click should NOT open a child board —
+        // the user is mid-connection and an accidental navigation would drop
+        // them out of the board they're connecting in.
+        if (props.connectFromCardId) {
+          return;
+        }
         if (card.type === "board" && !isInteractiveElement(event.target)) {
           props.onOpenBoard(card.childBoardId);
         }

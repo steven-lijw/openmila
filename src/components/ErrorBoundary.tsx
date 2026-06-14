@@ -23,6 +23,20 @@ export class ErrorBoundary extends Component<Props, State> {
     console.error("[ErrorBoundary]", error, info.componentStack);
   }
 
+  componentDidUpdate(prevProps: Props) {
+    // If the children reference changed (e.g. the app re-rendered with new
+    // content after the error), clear the error state so we try rendering
+    // the new children instead of staying stuck on the error screen until
+    // a full page reload.
+    if (this.state.hasError && prevProps.children !== this.props.children) {
+      this.setState({ hasError: false, error: null });
+    }
+  }
+
+  reset = () => {
+    this.setState({ hasError: false, error: null });
+  };
+
   render() {
     if (this.state.hasError) {
       return (
@@ -33,9 +47,10 @@ export class ErrorBoundary extends Component<Props, State> {
               <p style={{ fontSize: "13px", color: "#888", marginTop: "8px" }}>
                 {this.state.error?.message}
               </p>
-              <button type="button" onClick={() => window.location.reload()} style={{ marginTop: "16px" }}>
-                Reload
-              </button>
+              <div style={{ marginTop: "16px", display: "flex", gap: "8px", justifyContent: "center" }}>
+                <button type="button" onClick={this.reset}>Try again</button>
+                <button type="button" onClick={() => window.location.reload()}>Reload</button>
+              </div>
             </div>
           </main>
         </div>

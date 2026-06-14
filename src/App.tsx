@@ -1,6 +1,7 @@
 import { Toolbar } from "./components/Toolbar";
 import { CanvasBoard } from "./components/CanvasBoard";
 import { useWorkspaceController } from "./state/useWorkspaceController";
+import type { BoardBundle } from "./types";
 
 export default function App() {
   const controller = useWorkspaceController();
@@ -17,8 +18,8 @@ export default function App() {
     const path: { id: string; title: string }[] = [];
     let boardId: string | null = controller.currentBoard.board.id;
 
-    while (boardId) {
-      const bundle = controller.state.boards[boardId];
+    while (boardId !== null) {
+      const bundle: BoardBundle | undefined = controller.state.boards[boardId];
       if (!bundle) {
         break;
       }
