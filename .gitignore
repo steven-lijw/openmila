@@ -2,3 +2,8 @@
 node_modules
 dist
 *.tsbuildinfo
+
+# Local tooling configuration
+.claude/
+.codegraph/
+.mcp.json
