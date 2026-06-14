@@ -42,14 +42,46 @@ async function getFileHandleByPath(
   return directory.getFileHandle(fileName, { create });
 }
 
+/**
+ * Returns the parsed JSON, or `null` when the file does not exist.
+ * Any other failure (corrupt JSON, permission denied, IO error) is re-thrown
+ * with context so callers can distinguish "absent" (legitimate new-vault path)
+ * from "corrupt" (must not be silently overwritten — would lose data).
+ */
 async function readJsonFileAtPath<T>(root: FileSystemDirectoryHandle, path: string): Promise<T | null> {
+  let file: File;
   try {
     const handle = await getFileHandleByPath(root, path, false);
-    const file = await handle.getFile();
-    return JSON.parse(await file.text()) as T;
-  } catch {
-    return null;
+    file = await handle.getFile();
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      return null;
+    }
+    throw new Error(`Failed to read "${path}": ${describeError(error)}`, { cause: error });
   }
+  const text = await file.text();
+  try {
+    return JSON.parse(text) as T;
+  } catch (error) {
+    throw new Error(`Corrupt JSON at "${path}": ${describeError(error)}`, { cause: error });
+  }
+}
+
+function isNotFoundError(error: unknown): boolean {
+  if (error instanceof DOMException) {
+    return error.name === "NotFoundError";
+  }
+  // Some browsers/polyfills throw TypeError with a message; treat any "not found" wording as absent.
+  const name = (error as { name?: string } | null)?.name;
+  const message = (error as { message?: string } | null)?.message ?? "";
+  return name === "NotFoundError" || /not found/i.test(message);
+}
+
+function describeError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
 }
 
 async function writeJsonFileAtPath(root: FileSystemDirectoryHandle, path: string, data: unknown): Promise<void> {
@@ -164,7 +196,19 @@ export class BrowserFsVault {
     await ensureDirectory(this.rootHandle, "boards");
     await ensureDirectory(this.rootHandle, TRASH_DIRECTORY);
 
-    const workspace = await readJsonFileAtPath<WorkspaceFile>(this.rootHandle, "workspace.json");
+    let workspace: WorkspaceFile;
+    try {
+      workspace = (await readJsonFileAtPath<WorkspaceFile>(this.rootHandle, "workspace.json")) as WorkspaceFile;
+    } catch (error) {
+      // workspace.json is present but corrupt/unreadable — must NOT silently overwrite it
+      // (would orphan every board on disk). Surface the error to the user.
+      throw new Error(
+        "workspace.json in this vault appears to be corrupt or unreadable and could not be loaded. " +
+        "To protect your data, OpenMila will not overwrite it. " +
+        `Details: ${describeError(error)}`,
+        { cause: error },
+      );
+    }
     if (!workspace) {
       const created = createWorkspace();
       await writeJsonFileAtPath(this.rootHandle, "workspace.json", created.workspace);
@@ -239,21 +283,40 @@ export class BrowserFsVault {
 
   async saveBoardBundle(boardPath: string, bundle: BoardBundle): Promise<void> {
     const prev = this.writeQueues.get(boardPath) ?? Promise.resolve();
-    const next = prev.then(() => this._saveBoardBundle(boardPath, bundle));
+    // Swallow the previous attempt's rejection so a single failure doesn't
+    // permanently poison this board's save queue (every later save would
+    // short-circuit to the same rejected promise). We still surface *this*
+    // attempt's own errors to the caller via `await next`.
+    const next = prev
+      .catch(() => {
+        /* previous save failed — allow this one to retry */
+      })
+      .then(() => this._saveBoardBundle(boardPath, bundle));
     this.writeQueues.set(boardPath, next);
+    // Clean up the Map entry once the write settles so it can't grow unbounded
+    // and the next save starts from a fresh resolved promise.
+    void next.finally(() => {
+      if (this.writeQueues.get(boardPath) === next) {
+        this.writeQueues.delete(boardPath);
+      }
+    });
     await next;
   }
 
   private async _saveBoardBundle(boardPath: string, bundle: BoardBundle): Promise<void> {
     await getDirectoryHandleByPath(this.rootHandle, boardPath, true);
-    await writeJsonFileAtPath(this.rootHandle, `${boardPath}/board.json`, bundle.board);
     await getDirectoryHandleByPath(this.rootHandle, `${boardPath}/cards`, true);
     await getDirectoryHandleByPath(this.rootHandle, `${boardPath}/assets`, true);
     await getDirectoryHandleByPath(this.rootHandle, `${boardPath}/boards`, true);
 
+    // Write documents first; board.json is written last as a "commit point".
+    // If we fail partway, the on-disk board.json still matches the previous
+    // (older) documents, so loading yields a consistent state rather than
+    // referencing cards whose .md is missing/empty.
     for (const [cardId, markdown] of Object.entries(bundle.documents)) {
       await writeTextFileAtPath(this.rootHandle, `${boardPath}/cards/${cardId}.md`, markdown);
     }
+    await writeJsonFileAtPath(this.rootHandle, `${boardPath}/board.json`, bundle.board);
   }
 
   async importAsset(boardPath: string, file: File, preferredName?: string): Promise<string> {
@@ -288,14 +351,24 @@ export class BrowserFsVault {
     await removeEntryByPath(this.rootHandle, fromPath, true);
   }
 
+  /**
+   * Atomically move the given items into a new trash entry.
+   *
+   * Semantics: all-or-nothing. If ANY item fails to move, the items already
+   * moved into this entry's payload are restored to their original paths and
+   * the entry directory is removed, then an aggregate error is thrown. This
+   * lets callers (e.g. deleteSelectedCards) treat the operation as atomic and
+   * roll back the in-memory UI state on failure rather than leaving the disk
+   * in a half-deleted, unrecoverable state.
+   */
   async createTrashEntry(items: Array<{ path: string; kind: "file" | "directory" }>): Promise<string> {
     const trashRoot = await ensureDirectory(this.rootHandle, TRASH_DIRECTORY);
     const entryId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const entryDir = await ensureDirectory(trashRoot, entryId);
     const payloadDir = await ensureDirectory(entryDir, "payload");
     const metaItems: TrashItem[] = [];
-
     const errors: string[] = [];
+
     for (let index = 0; index < items.length; index += 1) {
       const item = items[index];
       const payloadName = String(index);
@@ -315,9 +388,25 @@ export class BrowserFsVault {
           payloadName,
           kind: item.kind,
         });
-      } catch (err) {
+      } catch {
         errors.push(item.path);
       }
+    }
+
+    if (errors.length > 0) {
+      // Roll back: restore whatever we DID move into payload, then drop the entry.
+      await this.restoreTrashEntry(entryId).catch(() => {
+        /* best-effort; the entry may still be partially populated */
+      });
+      try {
+        await trashRoot.removeEntry(entryId, { recursive: true });
+      } catch {
+        /* ignore — leaving an empty-ish entry is harmless and pruned later */
+      }
+      throw new Error(
+        `Failed to move ${errors.length} of ${items.length} item(s) to trash. ` +
+        `Rollback attempted. First failing path: ${errors[0]}`,
+      );
     }
 
     const meta: TrashEntry = {
@@ -325,9 +414,6 @@ export class BrowserFsVault {
       deletedAt: new Date().toISOString(),
       items: metaItems,
     };
-    if (metaItems.length === 0 && errors.length > 0) {
-      throw new Error(`Failed to trash all ${errors.length} item(s): ${errors[0]}`);
-    }
     await writeJsonFileAtPath(this.rootHandle, `${TRASH_DIRECTORY}/${entryId}/meta.json`, meta);
     await this.pruneTrash(TRASH_LIMIT);
     return entryId;

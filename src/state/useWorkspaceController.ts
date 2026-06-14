@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getFileExtension } from "../core/filePreview";
-import { addCardToBoard, createCardCreationResult, getBoard, getCard, moveCardToRoot, moveCardsToFront, patchCard, removeEdge, removeCardFromBoard, replaceBoardBundle, setBoardTitle, setCardDocument, updateEdgeList } from "../core/boardOperations";
+import { addCardToBoard, createCardCreationResult, getBoard, getCard, moveCardToRoot, moveCardsToFront, patchCard, removeEdge, removeCardFromBoard, replaceBoardBundle, setBoardTitle, setBoardTitleOnly, setCardDocument, updateEdgeList } from "../core/boardOperations";
 import { createId } from "../core/ids";
 import { BrowserFsVault } from "../storage/fsVault";
 import type { AppState, BoardBundle, CardMeta, CardType, DragCardPayload, Edge, Point, WorkspaceFile } from "../types";
@@ -20,6 +20,20 @@ const EMPTY_STATE: AppState = {
 };
 
 const UNDO_LIMIT = 10;
+const BOARD_TITLE_DEBOUNCE_MS = 600;
+
+type PendingBoardRename = {
+  boardId: string;
+  newTitle: string;
+  oldSlug: string;
+  newSlug: string;
+};
+
+type BoardRenameBarrier = {
+  /** Resolves once the in-flight directory rename has settled. */
+  promise: Promise<void>;
+  resolve: () => void;
+};
 
 type UndoSnapshot = {
   workspace: AppState["workspace"];
@@ -81,6 +95,29 @@ function buildBoardPathMap(
   return map;
 }
 
+/**
+ * Returns a copy of `boards` where each board's slug is replaced with the last
+ * slug actually committed to disk (the on-disk directory name). Used when
+ * computing file paths for reads/writes so they hit the real directory while a
+ * title rename is still debounced (the in-memory slug may be ahead of disk).
+ */
+function boardsAtCommittedSlugs(
+  boards: Record<string, BoardBundle>,
+  committedSlugs: Map<string, string>,
+): Record<string, BoardBundle> {
+  let result = boards;
+  for (const [boardId, committedSlug] of committedSlugs) {
+    const b = boards[boardId];
+    if (b && b.board.slug !== committedSlug) {
+      if (result === boards) {
+        result = { ...boards };
+      }
+      result[boardId] = { ...b, board: { ...b.board, slug: committedSlug } };
+    }
+  }
+  return result;
+}
+
 function collectBoardDescendants(boards: Record<string, BoardBundle>, rootId: string): string[] {
   const results: string[] = [];
   const stack = [rootId];
@@ -121,10 +158,53 @@ export function useWorkspaceController() {
   const vaultRef = useRef<BrowserFsVault | null>(null);
   const stateRef = useRef<AppState>(EMPTY_STATE);
   const undoStackRef = useRef<UndoSnapshot[]>([]);
+  // Per-board debounced title commits. Keyed by boardId so that renaming a
+  // board while another rename is pending for a different board doesn't reset it.
+  const pendingTitleTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  // Tracks the last slug that was actually committed to disk per board.
+  const committedSlugRef = useRef<Map<string, string>>(new Map());
+  // Barrier that resolves once any in-flight directory rename finishes. The
+  // autosave effect awaits this so it never persists a board.json whose slug
+  // doesn't match the on-disk directory.
+  const renameBarrierRef = useRef<BoardRenameBarrier | null>(null);
 
+  // Keep committedSlugRef in sync when a vault is opened or a board is created.
+  // Also drop entries for boards that have been removed from state (e.g. after
+  // a delete or undo), and resync when an undo reverts a slug back to a value
+  // that matches disk (we can't detect that precisely, so on undo we simply
+  // resync any entry whose committed slug no longer corresponds to a real disk
+  // dir — but the safest cheap invariant is: if a board's in-memory slug equals
+  // a slug that has NEVER been moved, treat committed == in-memory).
   useEffect(() => {
-    stateRef.current = state;
-  }, [state]);
+    const live = new Set(Object.keys(state.boards));
+    for (const boardId of committedSlugRef.current.keys()) {
+      if (!live.has(boardId)) {
+        committedSlugRef.current.delete(boardId);
+      }
+    }
+    for (const [boardId, bundle] of Object.entries(state.boards)) {
+      if (!committedSlugRef.current.has(boardId)) {
+        committedSlugRef.current.set(boardId, bundle.board.slug);
+      }
+    }
+  }, [state.boards]);
+
+  // Clear any pending rename timers on unmount.
+  useEffect(() => {
+    return () => {
+      for (const timer of pendingTitleTimersRef.current.values()) {
+        clearTimeout(timer);
+      }
+      pendingTitleTimersRef.current.clear();
+    };
+  }, []);
+
+  // These foundational callbacks are declared early because later callbacks
+  // (commitBoardRename, openVault, etc.) depend on them.
+  const setError = useCallback((error: unknown) => {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    setState((current) => ({ ...current, error: message }));
+  }, []);
 
   const pushUndo = useCallback((trashEntries?: string[]) => {
     const current = stateRef.current;
@@ -142,10 +222,98 @@ export function useWorkspaceController() {
     ];
   }, []);
 
-  const setError = useCallback((error: unknown) => {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    setState((current) => ({ ...current, error: message }));
-  }, []);
+  const commitBoardRename = useCallback(async (boardId: string) => {
+    const latestState = stateRef.current;
+    if (!latestState.workspace || !vaultRef.current) {
+      return;
+    }
+    const bundle = latestState.boards[boardId];
+    if (!bundle) {
+      return;
+    }
+    // The slug currently in memory reflects the typed title. The on-disk
+    // directory is still named after the LAST committed slug (tracked in
+    // committedSlugRef). We must move the dir from oldSlug -> newSlug.
+    const newSlug = bundle.board.slug;
+    const oldSlug = committedSlugRef.current.get(boardId) ?? newSlug;
+    if (oldSlug === newSlug) {
+      return;
+    }
+
+    const boardPaths = buildBoardPathMap(
+      // Use the OLD (committed) slug so the path map points at the existing dir.
+      boardsAtCommittedSlugs(latestState.boards, committedSlugRef.current),
+      latestState.workspace,
+    );
+    const oldPath = boardPaths[boardId];
+    const parentBoardId = bundle.board.parentBoardId;
+    const parentPath = parentBoardId ? boardPaths[parentBoardId] : null;
+    if (!oldPath) {
+      return;
+    }
+    const newPath = parentPath ? `${parentPath}/boards/${newSlug}` : `boards/${newSlug}`;
+
+    // Install the barrier so the autosave effect waits for the rename.
+    let releaseBarrier = () => {};
+    const barrierPromise = new Promise<void>((resolve) => {
+      releaseBarrier = resolve;
+    });
+    renameBarrierRef.current = { promise: barrierPromise, resolve: releaseBarrier };
+
+    try {
+      await vaultRef.current.moveDirectory(oldPath, newPath);
+      committedSlugRef.current.set(boardId, newSlug);
+    } catch (err) {
+      setError(err);
+      // Revert the slug in memory so it matches the still-present on-disk dir
+      // at oldPath. Only touch boards if the in-memory bundle still carries
+      // the newSlug we tried to commit (the user may have typed something
+      // else in the meantime — in that case we leave their input alone).
+      setState((current) => {
+        const currentBundle = current.boards[boardId];
+        if (!currentBundle || currentBundle.board.slug !== newSlug) {
+          return current;
+        }
+        const nextWorkspace =
+          current.workspace && currentBundle.board.id === current.workspace.rootBoardId
+            ? { ...current.workspace, rootBoardPath: `boards/${oldSlug}` }
+            : current.workspace;
+        return {
+          ...current,
+          workspace: nextWorkspace,
+          boards: {
+            ...current.boards,
+            [boardId]: {
+              ...currentBundle,
+              board: { ...currentBundle.board, slug: oldSlug },
+            },
+          },
+        };
+      });
+    } finally {
+      releaseBarrier();
+      if (renameBarrierRef.current?.resolve === releaseBarrier) {
+        renameBarrierRef.current = null;
+      }
+    }
+  }, [setError]);
+
+  const scheduleDirectoryRename = useCallback((boardId: string) => {
+    // Reset any existing timer for this board (debounce).
+    const existing = pendingTitleTimersRef.current.get(boardId);
+    if (existing) {
+      clearTimeout(existing);
+    }
+    const timer = setTimeout(() => {
+      pendingTitleTimersRef.current.delete(boardId);
+      void commitBoardRename(boardId);
+    }, BOARD_TITLE_DEBOUNCE_MS);
+    pendingTitleTimersRef.current.set(boardId, timer);
+  }, [commitBoardRename]);
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   const openVault = useCallback(async (mode: "picker" | "recent") => {
     try {
@@ -162,6 +330,13 @@ export function useWorkspaceController() {
       const initialized = await vault.initialize();
       vaultRef.current = vault;
       undoStackRef.current = [];
+      committedSlugRef.current = new Map(
+        Object.entries(initialized.boards).map(([id, b]) => [id, b.board.slug]),
+      );
+      for (const timer of pendingTitleTimersRef.current.values()) {
+        clearTimeout(timer);
+      }
+      pendingTitleTimersRef.current.clear();
       const nextCurrentBoardId = initialized.boards[initialized.workspace.recentBoardId]
         ? initialized.workspace.recentBoardId
         : initialized.workspace.rootBoardId;
@@ -204,15 +379,42 @@ export function useWorkspaceController() {
     if (!state.hasUnsavedChanges || !state.workspace || !vaultRef.current) {
       return;
     }
+    // Don't schedule a new debounce while a save is already in flight — its
+    // completion handler will re-check for newer edits and re-save if needed.
+    if (state.isSaving) {
+      return;
+    }
 
     const timeoutId = window.setTimeout(async () => {
       try {
         const latest = stateRef.current;
         if (!latest.workspace) return;
+        // If a board directory rename is in flight, wait for it to settle
+        // before persisting — otherwise we'd write board.json to the wrong
+        // (old) path, or with a slug that doesn't match the on-disk directory.
+        const barrier = renameBarrierRef.current;
+        if (barrier) {
+          await barrier.promise;
+        }
+        // Snapshot the boards reference we are about to persist. If the user
+        // edits again while the awaits below are in flight, `state.boards`
+        // will get a NEW reference — we then must NOT flip hasUnsavedChanges
+        // to false, or those mid-save edits would be treated as "saved" and
+        // could be lost if the user closes the tab.
+        const savedBoards = stateRef.current.boards;
+        const savedWorkspace = stateRef.current.workspace ?? latest.workspace;
+        if (!savedWorkspace) return;
         setState((current) => ({ ...current, isSaving: true }));
-        const boardPaths = buildBoardPathMap(latest.boards, latest.workspace);
-        await vaultRef.current!.saveWorkspace(latest.workspace);
-        for (const [boardId, bundle] of Object.entries(latest.boards)) {
+        // Build the path map using the LAST COMMITTED slug per board (i.e. the
+        // actual on-disk directory name). The in-memory slug may be ahead of
+        // disk while a rename is debounced; writing to the committed path keeps
+        // disk consistent. The pending rename (if any) will re-save when it fires.
+        const boardPaths = buildBoardPathMap(
+          boardsAtCommittedSlugs(savedBoards, committedSlugRef.current),
+          savedWorkspace,
+        );
+        await vaultRef.current!.saveWorkspace(savedWorkspace);
+        for (const [boardId, bundle] of Object.entries(savedBoards)) {
           const boardPath = boardPaths[boardId];
           if (!boardPath) {
             continue;
@@ -220,11 +422,18 @@ export function useWorkspaceController() {
           await vaultRef.current!.saveBoardBundle(boardPath, bundle);
         }
 
-        setState((current) => ({
-          ...current,
-          isSaving: false,
-          hasUnsavedChanges: false,
-        }));
+        setState((current) => {
+          const untouched = current.boards === savedBoards;
+          return {
+            ...current,
+            isSaving: false,
+            // Only clear the dirty flag if nothing changed during the awaits.
+            // If something did change, keep hasUnsavedChanges true; the
+            // isSaving transition (true -> false) re-triggers this effect and
+            // schedules a follow-up save of the newer state.
+            hasUnsavedChanges: untouched ? false : current.hasUnsavedChanges,
+          };
+        });
       } catch (error) {
         setError(error);
         setState((current) => ({ ...current, isSaving: false }));
@@ -232,7 +441,7 @@ export function useWorkspaceController() {
     }, 300);
 
     return () => window.clearTimeout(timeoutId);
-  }, [setError, state.hasUnsavedChanges, state.workspace]);
+  }, [setError, state.hasUnsavedChanges, state.isSaving, state.workspace]);
 
   const currentBoard = useMemo(() => {
     if (!state.currentBoardId) {
@@ -270,7 +479,10 @@ export function useWorkspaceController() {
     if (!input.workspace || !vaultRef.current) {
       return;
     }
-    const boardPaths = buildBoardPathMap(input.boards, input.workspace);
+    const boardPaths = buildBoardPathMap(
+      boardsAtCommittedSlugs(input.boards, committedSlugRef.current),
+      input.workspace,
+    );
     await vaultRef.current.saveWorkspace(input.workspace);
     for (const [boardId, bundle] of Object.entries(input.boards)) {
       const boardPath = boardPaths[boardId];
@@ -292,7 +504,10 @@ export function useWorkspaceController() {
       return;
     }
 
-    const boardPaths = buildBoardPathMap(latestState.boards, latestState.workspace);
+    const boardPaths = buildBoardPathMap(
+      boardsAtCommittedSlugs(latestState.boards, committedSlugRef.current),
+      latestState.workspace,
+    );
     const boardPath = boardPaths[input.boardId];
     if (!boardPath) {
       return;
@@ -480,35 +695,16 @@ export function useWorkspaceController() {
       return;
     }
     // Update card title
-    let nextBundle = replaceBoardBundle(bundle, patchCard(bundle.board, cardId, (c) =>
+    const nextBundle = replaceBoardBundle(bundle, patchCard(bundle.board, cardId, (c) =>
       c.type === "board" ? { ...c, title } : c,
     ));
-    // Update child board title
+    // Update child board title + slug in memory immediately (UI responsive).
     const childBoard = latestState.boards[card.childBoardId];
     if (childBoard) {
       const updatedChild = setBoardTitle(childBoard, title);
       const oldSlug = childBoard.board.slug;
       const newSlug = updatedChild.board.slug;
-      if (oldSlug !== newSlug && vaultRef.current) {
-        const boardPaths = buildBoardPathMap(latestState.boards, latestState.workspace);
-        const parentPath = boardPaths[boardId];
-        if (parentPath) {
-          const oldPath = `${parentPath}/boards/${oldSlug}`;
-          const newPath = `${parentPath}/boards/${newSlug}`;
-          void vaultRef.current.moveDirectory(oldPath, newPath).catch((err) => {
-            // Revert slug on failure
-            setError(err);
-            setState((current) => ({
-              ...current,
-              boards: {
-                ...current.boards,
-                [card.childBoardId]: latestState.boards[card.childBoardId] ?? current.boards[card.childBoardId],
-              },
-            }));
-          });
-        }
-      }
-      nextBundle = {
+      const mergedBundle = {
         ...nextBundle,
         documents: {
           ...nextBundle.documents,
@@ -520,15 +716,19 @@ export function useWorkspaceController() {
         workspace: latestState.workspace,
         boards: {
           ...current.boards,
-          [boardId]: nextBundle,
+          [boardId]: mergedBundle,
           [card.childBoardId]: updatedChild,
         },
         hasUnsavedChanges: true,
       }));
+      // Defer the disk directory rename of the CHILD board until typing settles.
+      if (oldSlug !== newSlug && vaultRef.current) {
+        scheduleDirectoryRename(card.childBoardId);
+      }
     } else {
       updateBoardBundle(boardId, nextBundle);
     }
-  }, [setError, updateBoardBundle]);
+  }, [scheduleDirectoryRename, updateBoardBundle]);
 
   const bringCardsToFront = useCallback((boardId: string, cardIds: string[]) => {
     if (cardIds.length === 0) {
@@ -581,7 +781,10 @@ export function useWorkspaceController() {
     if (!latestState.currentBoardId || latestState.selectedCardIds.length === 0 || !latestState.workspace) {
       return;
     }
-    const boardPaths = buildBoardPathMap(latestState.boards, latestState.workspace);
+    const boardPaths = buildBoardPathMap(
+      boardsAtCommittedSlugs(latestState.boards, committedSlugRef.current),
+      latestState.workspace,
+    );
     const currentBoardPath = boardPaths[latestState.currentBoardId];
     if (!currentBoardPath) {
       return;
@@ -648,13 +851,29 @@ export function useWorkspaceController() {
       hasUnsavedChanges: true,
     }));
 
-    // Create trash entry synchronously before persisting, so files are recoverable
-    let trashEntryId: string | undefined;
+    // Move files to trash BEFORE persisting the post-delete board.json, so the
+    // files are recoverable. If this fails, roll back the in-memory deletion so
+    // the UI stays consistent with disk (don't persist a board.json that drops
+    // references to files still on disk but not in trash).
     if (vaultRef.current && trashItems.length > 0) {
       try {
-        trashEntryId = await vaultRef.current.createTrashEntry(trashItems);
+        await vaultRef.current.createTrashEntry(trashItems);
       } catch (error) {
         setError(error);
+        // Revert in-memory state to the pre-delete snapshot. The undo stack
+        // entry we just pushed will become a no-op duplicate, which is fine.
+        setState((current) => ({
+          ...current,
+          boards: latestState.boards,
+          workspace: latestState.workspace,
+          selectedCardIds: latestState.selectedCardIds,
+          activeCardId: latestState.activeCardId,
+          connectFromCardId: latestState.connectFromCardId,
+          hasUnsavedChanges: false,
+        }));
+        // Drop the undo entry we just pushed — there's nothing to undo back to.
+        undoStackRef.current.pop();
+        return;
       }
     }
 
@@ -785,6 +1004,14 @@ export function useWorkspaceController() {
       connectFromCardId: null,
       hasUnsavedChanges: true,
     }));
+    // After restoring a snapshot, resync committed slugs to the in-memory
+    // slugs: the snapshot's slug is what we want on disk, and the next save
+    // will write to (and, if needed, a rename will reconcile) that path.
+    // Pending rename timers for boards whose slug reverted become no-ops
+    // because commitBoardRename compares against committedSlugRef.
+    committedSlugRef.current = new Map(
+      Object.entries(snapshot.boards).map(([id, b]) => [id, b.board.slug]),
+    );
     if (snapshot.trashEntries && vaultRef.current) {
       void Promise.all(snapshot.trashEntries.map((entryId) => vaultRef.current!.restoreTrashEntry(entryId))).catch(setError);
     }
@@ -812,43 +1039,31 @@ export function useWorkspaceController() {
     if (!currentBoard || !state.workspace) {
       return;
     }
-    const nextBundle = setBoardTitle(currentBoard, title);
+    const boardId = currentBoard.board.id;
     const oldSlug = currentBoard.board.slug;
+    // Update title + slug in memory immediately so the UI is responsive.
+    const nextBundle = setBoardTitle(currentBoard, title);
     const newSlug = nextBundle.board.slug;
     let nextWorkspace = state.workspace;
-    if (currentBoard.board.id === state.workspace.rootBoardId) {
+    if (boardId === state.workspace.rootBoardId) {
       nextWorkspace = {
         ...state.workspace,
         rootBoardPath: `boards/${newSlug}`,
       };
     }
-    if (oldSlug !== newSlug && vaultRef.current) {
-      const boardPaths = buildBoardPathMap(state.boards, state.workspace);
-      const oldPath = boardPaths[currentBoard.board.id] ?? state.workspace.rootBoardPath;
-      const parentPath = currentBoard.board.parentBoardId
-        ? boardPaths[currentBoard.board.parentBoardId]
-        : null;
-      const newPath = parentPath ? `${parentPath}/boards/${newSlug}` : `boards/${newSlug}`;
-      void vaultRef.current.moveDirectory(oldPath, newPath).catch((err) => {
-        setError(err);
-        // Revert to previous board state on failure
-        setState((current) => ({
-          ...current,
-          boards: {
-            ...current.boards,
-            [currentBoard.board.id]: currentBoard,
-          },
-          workspace: state.workspace,
-        }));
-      });
-    }
     updateWorkspaceAndBoards({
       workspace: nextWorkspace,
       bundles: {
-        [currentBoard.board.id]: nextBundle,
+        [boardId]: nextBundle,
       },
     });
-  }, [currentBoard, setError, state.boards, state.workspace, updateWorkspaceAndBoards]);
+    // Defer the disk directory rename until the user stops typing. The
+    // rename barrier (commitBoardRename) prevents autosave from persisting a
+    // board.json whose slug doesn't match the on-disk directory.
+    if (oldSlug !== newSlug && vaultRef.current) {
+      scheduleDirectoryRename(boardId);
+    }
+  }, [currentBoard, scheduleDirectoryRename, state.workspace, updateWorkspaceAndBoards]);
 
   const setViewport = useCallback((boardId: string, position: { x: number; y: number; zoom: number }) => {
     const bundle = getBoard(stateRef.current, boardId);
@@ -863,7 +1078,10 @@ export function useWorkspaceController() {
     if (!vaultRef.current || !latestState.workspace) {
       return "";
     }
-    const boardPaths = buildBoardPathMap(latestState.boards, latestState.workspace);
+    const boardPaths = buildBoardPathMap(
+      boardsAtCommittedSlugs(latestState.boards, committedSlugRef.current),
+      latestState.workspace,
+    );
     const boardPath = boardPaths[boardId];
     if (!boardPath) {
       return "";

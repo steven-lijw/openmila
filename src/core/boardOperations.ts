@@ -102,6 +102,19 @@ export function setBoardTitle(bundle: BoardBundle, title: string): BoardBundle {
   });
 }
 
+/**
+ * Update only the board's title, leaving the slug (and therefore the on-disk
+ * directory name) untouched. Used while the user is typing the title so that
+ * the slug — which maps to the on-disk path — stays in sync with the disk
+ * until a debounced commit renames the directory and updates the slug atomically.
+ */
+export function setBoardTitleOnly(bundle: BoardBundle, title: string): BoardBundle {
+  return replaceBoardBundle(bundle, {
+    ...bundle.board,
+    title,
+  });
+}
+
 export function createCardCreationResult(
   workspace: WorkspaceFile,
   bundle: BoardBundle,
