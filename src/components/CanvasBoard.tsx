@@ -5,7 +5,7 @@ import { createId } from "../core/ids";
 import { LinkPreviewDisplay } from "./LinkPreviewDisplay";
 import { renderMarkdown } from "../core/markdown";
 import { parseTodoMarkdown, stringifyTodoMarkdown } from "../core/todoMarkdown";
-import { CARD_COLORS } from "../core/model";
+import { CARD_COLORS, BOARD_COLORS } from "../core/model";
 import type { BoardBundle, CardMeta, DragCardPayload, DragToolPayload, Point } from "../types";
 
 interface CanvasBoardProps {
@@ -1557,7 +1557,7 @@ function CardRenderer(props: CardRendererProps) {
     >
       {isHovered && !isEditing && card.type !== "image" && card.type !== "link" ? (
         <div className="color-bar">
-          {CARD_COLORS.map((colorDef) => (
+          {(isBoardCard ? BOARD_COLORS : CARD_COLORS).map((colorDef) => (
             <button
               key={colorDef.key}
               type="button"

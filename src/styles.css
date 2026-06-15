@@ -421,6 +421,10 @@ button {
   overflow: visible;
 }
 
+.canvas-card.type-board .color-bar {
+  justify-content: center;
+}
+
 /* Connect handle — small white circle, top-right corner, selected only */
 .connect-handle {
   position: absolute;

@@ -25,6 +25,15 @@ export const CARD_COLORS = [
   { key: "teal", label: "Teal", bg: "#e0f2f1" },
 ] as const;
 
+export const BOARD_COLORS = [
+  { key: "default", label: "Default", bg: "#5B8DEF" },
+  { key: "red", label: "Red", bg: "#E53935" },
+  { key: "orange", label: "Orange", bg: "#F4511E" },
+  { key: "yellow", label: "Yellow", bg: "#FDD835" },
+  { key: "green", label: "Green", bg: "#43A047" },
+  { key: "teal", label: "Teal", bg: "#00897B" },
+] as const;
+
 export type CardColorKey = (typeof CARD_COLORS)[number]["key"];
 
 const DEFAULT_CARD_SIZE = {
