@@ -234,7 +234,7 @@ function renderEditableContent(input: {
   if (card.type === "board") {
     return (
       <div className="board-card">
-        <div className="board-icon-shell">
+        <div className="board-icon-shell" style={card.cardColor ? { backgroundColor: card.cardColor } : undefined}>
           <svg
             className="board-icon"
             viewBox="0 0 24 24"
@@ -503,10 +503,9 @@ export function CanvasBoard(props: CanvasBoardProps) {
 
   const getEdgeCenter = (card: CardMeta, position: Point) => {
     if (card.type === "board") {
-      const pad = card.cardColor ? 8 : 0;
       return {
-        x: position.x + pad + 20,
-        y: position.y + pad + 20,
+        x: position.x + 20,
+        y: position.y + 20,
       };
     }
     const size = getDisplaySize(card);
@@ -519,7 +518,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
   // Returns where a line from (fromX, fromY) to the card center hits the card's edge
   const getEdgeEndpoint = (card: CardMeta, cardPosition: Point, fromX: number, fromY: number) => {
     const center = card.type === "board"
-      ? { x: cardPosition.x + (card.cardColor ? 8 : 0) + 20, y: cardPosition.y + (card.cardColor ? 8 : 0) + 20 }
+      ? { x: cardPosition.x + 20, y: cardPosition.y + 20 }
       : { x: cardPosition.x + getDisplaySize(card).width / 2, y: cardPosition.y + getDisplaySize(card).height / 2 };
 
     const dx = center.x - fromX;
@@ -1483,12 +1482,12 @@ function CardRenderer(props: CardRendererProps) {
   return (
     <div
       ref={cardRef}
-      className={`canvas-card ${isSelected ? "selected" : ""} ${isBoardCard ? "type-board" : `type-${card.type}`} ${props.isDragging ? "dragging" : ""} ${isBoardCard && card.cardColor ? "has-color" : ""}`}
+      className={`canvas-card ${isSelected ? "selected" : ""} ${isBoardCard ? "type-board" : `type-${card.type}`} ${props.isDragging ? "dragging" : ""}`}
       style={{
         left: props.displayPosition.x,
         top: props.displayPosition.y,
         ...(isBoardCard ? {} : { width: props.displaySize.width, height: props.displaySize.height }),
-        ...(card.cardColor && card.type !== "image" && card.type !== "link" ? { backgroundColor: card.cardColor } : {}),
+        ...(card.cardColor && card.type !== "image" && card.type !== "link" && card.type !== "board" ? { backgroundColor: card.cardColor } : {}),
       }}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
