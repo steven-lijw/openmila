@@ -417,6 +417,10 @@ button {
   contain: none;
 }
 
+.canvas-card.type-board .canvas-card-content {
+  overflow: visible;
+}
+
 /* Connect handle — small white circle, top-right corner, selected only */
 .connect-handle {
   position: absolute;
@@ -956,13 +960,21 @@ button {
 }
 
 .board-card {
+  position: relative;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  height: 100%;
-  width: 100%;
+  width: 40px;
+  height: 40px;
+}
+
+.board-card .board-title-input {
+  position: absolute;
+  top: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 120px;
 }
 
 .board-icon-shell {
