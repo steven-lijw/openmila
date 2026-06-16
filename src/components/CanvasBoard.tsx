@@ -454,6 +454,8 @@ export function CanvasBoard(props: CanvasBoardProps) {
   propsRef.current = props;
   const { onDeleteEdge } = props;
   const [assetUrls, setAssetUrls] = useState<Record<string, string>>({});
+  const assetUrlsRef = useRef<Record<string, string>>({});
+  assetUrlsRef.current = assetUrls;
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState<Point | null>(null);
   const [draggingCard, setDraggingCard] = useState<DraggingCardState | null>(null);
@@ -588,6 +590,10 @@ export function CanvasBoard(props: CanvasBoardProps) {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      // Revoke all blob URLs on unmount to prevent memory leaks.
+      for (const url of Object.values(assetUrlsRef.current)) {
+        URL.revokeObjectURL(url);
+      }
     };
   }, []);
 
@@ -651,12 +657,15 @@ export function CanvasBoard(props: CanvasBoardProps) {
   }, [rootCardMap]);
 
   const screenToCanvas = (clientX: number, clientY: number): Point => {
-    const rect = canvasRef.current!.getBoundingClientRect();
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return { x: 0, y: 0 };
     return {
       x: (clientX - rect.left - props.boardBundle.board.viewport.x) / props.boardBundle.board.viewport.zoom,
       y: (clientY - rect.top - props.boardBundle.board.viewport.y) / props.boardBundle.board.viewport.zoom,
     };
   };
+  const screenToCanvasRef = useRef(screenToCanvas);
+  screenToCanvasRef.current = screenToCanvas;
 
   const fitToView = useCallback(() => {
     const cards = rootCards;
@@ -755,7 +764,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
         return;
       }
 
-      const point = screenToCanvas(event.clientX, event.clientY);
+      const point = screenToCanvasRef.current(event.clientX, event.clientY);
       const dc = draggingCardRef.current;
 
       if (dc) {

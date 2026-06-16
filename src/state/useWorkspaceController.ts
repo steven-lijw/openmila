@@ -711,16 +711,23 @@ export function useWorkspaceController() {
           ...updatedChild.documents,
         },
       };
-      setState((current) => ({
-        ...current,
-        workspace: latestState.workspace,
-        boards: {
-          ...current.boards,
-          [boardId]: mergedBundle,
-          [card.childBoardId]: updatedChild,
-        },
-        hasUnsavedChanges: true,
-      }));
+      pushUndo();
+      setState((current) => {
+        const currentWorkspace = current.workspace;
+        const nextWorkspace = currentWorkspace && card.childBoardId === currentWorkspace.rootBoardId
+          ? { ...currentWorkspace, rootBoardPath: `boards/${newSlug}` }
+          : currentWorkspace;
+        return {
+          ...current,
+          workspace: nextWorkspace,
+          boards: {
+            ...current.boards,
+            [boardId]: mergedBundle,
+            [card.childBoardId]: updatedChild,
+          },
+          hasUnsavedChanges: true,
+        };
+      });
       // Defer the disk directory rename of the CHILD board until typing settles.
       if (oldSlug !== newSlug && vaultRef.current) {
         scheduleDirectoryRename(card.childBoardId);
@@ -728,7 +735,7 @@ export function useWorkspaceController() {
     } else {
       updateBoardBundle(boardId, nextBundle);
     }
-  }, [scheduleDirectoryRename, updateBoardBundle]);
+  }, [pushUndo, scheduleDirectoryRename, updateBoardBundle]);
 
   const bringCardsToFront = useCallback((boardId: string, cardIds: string[]) => {
     if (cardIds.length === 0) {
