@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getFileExtension } from "../core/filePreview";
-import { addCardToBoard, createCardCreationResult, getBoard, getCard, moveCardToRoot, moveCardsToFront, patchCard, removeEdge, removeCardFromBoard, replaceBoardBundle, setBoardTitle, setBoardTitleOnly, setCardDocument, updateEdgeList } from "../core/boardOperations";
-import { createId } from "../core/ids";
+import { addCardToBoard, createCardCreationResult, getBoard, getCard, moveCardToRoot, moveCardsToFront, patchCard, removeEdge, removeCardFromBoard, replaceBoardBundle, setBoardTitle, setCardDocument, updateEdgeList } from "../core/boardOperations";
+import { createId, createSlug } from "../core/ids";
 import { BrowserFsVault } from "../storage/fsVault";
 import type { AppState, BoardBundle, CardMeta, CardType, DragCardPayload, Edge, Point, WorkspaceFile } from "../types";
 
@@ -116,6 +116,63 @@ function boardsAtCommittedSlugs(
     }
   }
   return result;
+}
+
+function bundleAtCommittedSlug(
+  bundle: BoardBundle,
+  committedSlugs: Map<string, string>,
+): BoardBundle {
+  const committedSlug = committedSlugs.get(bundle.board.id);
+  if (!committedSlug || committedSlug === bundle.board.slug) {
+    return bundle;
+  }
+  return {
+    ...bundle,
+    board: {
+      ...bundle.board,
+      slug: committedSlug,
+    },
+  };
+}
+
+function workspaceAtCommittedRootPath(
+  workspace: WorkspaceFile,
+  boards: Record<string, BoardBundle>,
+  committedSlugs: Map<string, string>,
+): WorkspaceFile {
+  const rootBoard = boards[workspace.rootBoardId];
+  const committedRootSlug = rootBoard ? committedSlugs.get(rootBoard.board.id) : null;
+  if (!rootBoard || !committedRootSlug || committedRootSlug === rootBoard.board.slug) {
+    return workspace;
+  }
+  return {
+    ...workspace,
+    rootBoardPath: `boards/${committedRootSlug}`,
+  };
+}
+
+function createUniqueBoardSlug(
+  boards: Record<string, BoardBundle>,
+  boardId: string,
+  parentBoardId: string | null,
+  title: string,
+): string {
+  const baseSlug = createSlug(title);
+  const siblingSlugs = new Set(
+    Object.values(boards)
+      .filter((bundle) => bundle.board.id !== boardId && bundle.board.parentBoardId === parentBoardId)
+      .map((bundle) => bundle.board.slug),
+  );
+
+  if (!siblingSlugs.has(baseSlug)) {
+    return baseSlug;
+  }
+
+  let suffix = 2;
+  while (siblingSlugs.has(`${baseSlug}-${suffix}`)) {
+    suffix += 1;
+  }
+  return `${baseSlug}-${suffix}`;
 }
 
 function collectBoardDescendants(boards: Record<string, BoardBundle>, rootId: string): string[] {
@@ -263,6 +320,10 @@ export function useWorkspaceController() {
     try {
       await vaultRef.current.moveDirectory(oldPath, newPath);
       committedSlugRef.current.set(boardId, newSlug);
+      setState((current) => ({
+        ...current,
+        hasUnsavedChanges: true,
+      }));
     } catch (err) {
       setError(err);
       // Revert the slug in memory so it matches the still-present on-disk dir
@@ -404,22 +465,28 @@ export function useWorkspaceController() {
         const savedBoards = stateRef.current.boards;
         const savedWorkspace = stateRef.current.workspace ?? latest.workspace;
         if (!savedWorkspace) return;
+        const diskWorkspace = workspaceAtCommittedRootPath(
+          savedWorkspace,
+          savedBoards,
+          committedSlugRef.current,
+        );
+        const diskBoards = boardsAtCommittedSlugs(savedBoards, committedSlugRef.current);
         setState((current) => ({ ...current, isSaving: true }));
         // Build the path map using the LAST COMMITTED slug per board (i.e. the
         // actual on-disk directory name). The in-memory slug may be ahead of
         // disk while a rename is debounced; writing to the committed path keeps
         // disk consistent. The pending rename (if any) will re-save when it fires.
-        const boardPaths = buildBoardPathMap(
-          boardsAtCommittedSlugs(savedBoards, committedSlugRef.current),
-          savedWorkspace,
-        );
-        await vaultRef.current!.saveWorkspace(savedWorkspace);
+        const boardPaths = buildBoardPathMap(diskBoards, diskWorkspace);
+        await vaultRef.current!.saveWorkspace(diskWorkspace);
         for (const [boardId, bundle] of Object.entries(savedBoards)) {
           const boardPath = boardPaths[boardId];
           if (!boardPath) {
             continue;
           }
-          await vaultRef.current!.saveBoardBundle(boardPath, bundle);
+          await vaultRef.current!.saveBoardBundle(
+            boardPath,
+            bundleAtCommittedSlug(bundle, committedSlugRef.current),
+          );
         }
 
         setState((current) => {
@@ -479,17 +546,23 @@ export function useWorkspaceController() {
     if (!input.workspace || !vaultRef.current) {
       return;
     }
-    const boardPaths = buildBoardPathMap(
-      boardsAtCommittedSlugs(input.boards, committedSlugRef.current),
+    const diskWorkspace = workspaceAtCommittedRootPath(
       input.workspace,
+      input.boards,
+      committedSlugRef.current,
     );
-    await vaultRef.current.saveWorkspace(input.workspace);
+    const diskBoards = boardsAtCommittedSlugs(input.boards, committedSlugRef.current);
+    const boardPaths = buildBoardPathMap(diskBoards, diskWorkspace);
+    await vaultRef.current.saveWorkspace(diskWorkspace);
     for (const [boardId, bundle] of Object.entries(input.boards)) {
       const boardPath = boardPaths[boardId];
       if (!boardPath) {
         continue;
       }
-      await vaultRef.current.saveBoardBundle(boardPath, bundle);
+      await vaultRef.current.saveBoardBundle(
+        boardPath,
+        bundleAtCommittedSlug(bundle, committedSlugRef.current),
+      );
     }
   }, []);
 
@@ -630,7 +703,16 @@ export function useWorkspaceController() {
 
     nextBundles[bundle.board.id] = nextBundle;
     if (creation.createdBoard) {
-      nextBundles[creation.createdBoard.board.id] = creation.createdBoard;
+      const uniqueSlug = createUniqueBoardSlug(
+        latestState.boards,
+        creation.createdBoard.board.id,
+        creation.createdBoard.board.parentBoardId,
+        creation.createdBoard.board.title,
+      );
+      nextBundles[creation.createdBoard.board.id] = replaceBoardBundle(creation.createdBoard, {
+        ...creation.createdBoard.board,
+        slug: uniqueSlug,
+      });
     }
 
     updateWorkspaceAndBoards({
@@ -701,16 +783,18 @@ export function useWorkspaceController() {
     // Update child board title + slug in memory immediately (UI responsive).
     const childBoard = latestState.boards[card.childBoardId];
     if (childBoard) {
-      const updatedChild = setBoardTitle(childBoard, title);
+      const titledChild = setBoardTitle(childBoard, title);
+      const updatedChild = replaceBoardBundle(titledChild, {
+        ...titledChild.board,
+        slug: createUniqueBoardSlug(
+          latestState.boards,
+          titledChild.board.id,
+          titledChild.board.parentBoardId,
+          title,
+        ),
+      });
       const oldSlug = childBoard.board.slug;
       const newSlug = updatedChild.board.slug;
-      const mergedBundle = {
-        ...nextBundle,
-        documents: {
-          ...nextBundle.documents,
-          ...updatedChild.documents,
-        },
-      };
       pushUndo();
       setState((current) => {
         const currentWorkspace = current.workspace;
@@ -722,7 +806,7 @@ export function useWorkspaceController() {
           workspace: nextWorkspace,
           boards: {
             ...current.boards,
-            [boardId]: mergedBundle,
+            [boardId]: nextBundle,
             [card.childBoardId]: updatedChild,
           },
           hasUnsavedChanges: true,
@@ -845,9 +929,21 @@ export function useWorkspaceController() {
       };
     }
 
+    // Move files to trash BEFORE updating state or persisting the post-delete
+    // board.json, so undo can restore the physical files/directories too.
+    const trashEntries: string[] = [];
+    if (vaultRef.current && trashItems.length > 0) {
+      try {
+        trashEntries.push(await vaultRef.current.createTrashEntry(trashItems));
+      } catch (error) {
+        setError(error);
+        return;
+      }
+    }
+
     nextBoards[latestState.currentBoardId] = nextBundle;
 
-    pushUndo();
+    pushUndo(trashEntries.length > 0 ? trashEntries : undefined);
     setState((current) => ({
       ...current,
       boards: nextBoards,
@@ -857,32 +953,6 @@ export function useWorkspaceController() {
       connectFromCardId: null,
       hasUnsavedChanges: true,
     }));
-
-    // Move files to trash BEFORE persisting the post-delete board.json, so the
-    // files are recoverable. If this fails, roll back the in-memory deletion so
-    // the UI stays consistent with disk (don't persist a board.json that drops
-    // references to files still on disk but not in trash).
-    if (vaultRef.current && trashItems.length > 0) {
-      try {
-        await vaultRef.current.createTrashEntry(trashItems);
-      } catch (error) {
-        setError(error);
-        // Revert in-memory state to the pre-delete snapshot. The undo stack
-        // entry we just pushed will become a no-op duplicate, which is fine.
-        setState((current) => ({
-          ...current,
-          boards: latestState.boards,
-          workspace: latestState.workspace,
-          selectedCardIds: latestState.selectedCardIds,
-          activeCardId: latestState.activeCardId,
-          connectFromCardId: latestState.connectFromCardId,
-          hasUnsavedChanges: false,
-        }));
-        // Drop the undo entry we just pushed — there's nothing to undo back to.
-        undoStackRef.current.pop();
-        return;
-      }
-    }
 
     void persistStateSnapshot({
       workspace: nextWorkspace,
@@ -1049,7 +1119,16 @@ export function useWorkspaceController() {
     const boardId = currentBoard.board.id;
     const oldSlug = currentBoard.board.slug;
     // Update title + slug in memory immediately so the UI is responsive.
-    const nextBundle = setBoardTitle(currentBoard, title);
+    const titledBundle = setBoardTitle(currentBoard, title);
+    const nextBundle = replaceBoardBundle(titledBundle, {
+      ...titledBundle.board,
+      slug: createUniqueBoardSlug(
+        state.boards,
+        titledBundle.board.id,
+        titledBundle.board.parentBoardId,
+        title,
+      ),
+    });
     const newSlug = nextBundle.board.slug;
     let nextWorkspace = state.workspace;
     if (boardId === state.workspace.rootBoardId) {
@@ -1070,7 +1149,7 @@ export function useWorkspaceController() {
     if (oldSlug !== newSlug && vaultRef.current) {
       scheduleDirectoryRename(boardId);
     }
-  }, [currentBoard, scheduleDirectoryRename, state.workspace, updateWorkspaceAndBoards]);
+  }, [currentBoard, scheduleDirectoryRename, state.boards, state.workspace, updateWorkspaceAndBoards]);
 
   const setViewport = useCallback((boardId: string, position: { x: number; y: number; zoom: number }) => {
     const bundle = getBoard(stateRef.current, boardId);
