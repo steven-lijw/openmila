@@ -63,25 +63,28 @@ export default function App() {
           </div>
 
           <div className="topbar-center">
-            <div className="board-title-shell">
+            <div className={`board-title-shell${controller.currentBoard ? "" : " is-idle"}`}>
               <input
                 className="board-title-input"
                 value={controller.currentBoard?.board.title ?? ""}
                 onChange={(event) => controller.updateCurrentBoardTitle(event.target.value)}
-                placeholder="Board title"
+                placeholder={controller.currentBoard ? "Board title" : "No board open"}
+                disabled={!controller.currentBoard}
               />
             </div>
           </div>
 
           <div className="topbar-right">
-            <button
-              type="button"
-              className="nav-button"
-              onClick={() => controller.goToParentBoard()}
-              disabled={!controller.currentBoard?.board.parentBoardId}
-            >
-              Back
-            </button>
+            {controller.currentBoard ? (
+              <button
+                type="button"
+                className="nav-button"
+                onClick={() => controller.goToParentBoard()}
+                disabled={!controller.currentBoard.board.parentBoardId}
+              >
+                Back
+              </button>
+            ) : null}
             <button type="button" className="nav-button" onClick={() => void controller.openVault("picker")}>
               Open vault
             </button>
@@ -92,14 +95,59 @@ export default function App() {
         </header>
 
         {!controller.state.isReady ? <div className="loading-state">Loading vault...</div> : null}
-        {controller.state.error ? <div className="error-banner">{controller.state.error}</div> : null}
+        {controller.state.error && controller.currentBoard ? (
+          <div className="error-banner">{controller.state.error}</div>
+        ) : null}
 
         {!controller.currentBoard && controller.state.isReady ? (
           <div className="empty-state">
-            <p>No vault is open yet.</p>
-            <button type="button" onClick={() => void controller.openVault("picker")}>
-              Choose local vault folder
-            </button>
+            <section className="empty-state-copy" aria-labelledby="empty-state-title">
+              <span className="empty-state-kicker">Local vault</span>
+              <h1 id="empty-state-title">Open a workspace folder</h1>
+              <p>
+                Pick a local folder to load your boards, notes, files, and nested canvases.
+              </p>
+              <div className="empty-state-actions">
+                <button
+                  type="button"
+                  className="empty-state-primary"
+                  onClick={() => void controller.openVault("picker")}
+                >
+                  Choose vault folder
+                </button>
+              </div>
+              {controller.state.error ? (
+                <div className="empty-state-error" role="status">
+                  {controller.state.error}
+                </div>
+              ) : null}
+            </section>
+
+            <section className="empty-state-preview" aria-hidden="true">
+              <div className="empty-preview-board">
+                <div className="empty-preview-toolbar">
+                  <span />
+                  <span />
+                  <span />
+                </div>
+                <div className="empty-preview-card empty-preview-card-note">
+                  <strong>Research map</strong>
+                  <span>Ideas, links, and files live together.</span>
+                </div>
+                <div className="empty-preview-card empty-preview-card-board">
+                  <span className="empty-preview-board-icon">M</span>
+                  <strong>Project board</strong>
+                </div>
+                <div className="empty-preview-card empty-preview-card-file">
+                  <strong>Draft.pdf</strong>
+                  <span>Local asset</span>
+                </div>
+                <svg className="empty-preview-lines" viewBox="0 0 420 300">
+                  <path d="M126 112 C170 74 222 68 268 96" />
+                  <path d="M282 142 C246 184 198 196 154 168" />
+                </svg>
+              </div>
+            </section>
           </div>
         ) : null}
 
