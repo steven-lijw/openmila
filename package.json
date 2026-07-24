@@ -50,5 +50,9 @@
     "visual-thinking",
     "notes",
     "react"
-  ]
+  ],
+  "allowScripts": {
+    "esbuild@0.21.5": true,
+    "fsevents@2.3.3": true
+  }
 }

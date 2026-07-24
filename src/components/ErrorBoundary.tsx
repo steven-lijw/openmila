@@ -23,16 +23,6 @@ export class ErrorBoundary extends Component<Props, State> {
     console.error("[ErrorBoundary]", error, info.componentStack);
   }
 
-  componentDidUpdate(prevProps: Props) {
-    // If the children reference changed (e.g. the app re-rendered with new
-    // content after the error), clear the error state so we try rendering
-    // the new children instead of staying stuck on the error screen until
-    // a full page reload.
-    if (this.state.hasError && prevProps.children !== this.props.children) {
-      this.setState({ hasError: false, error: null });
-    }
-  }
-
   reset = () => {
     this.setState({ hasError: false, error: null });
   };

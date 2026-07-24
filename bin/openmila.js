@@ -56,7 +56,8 @@ const CSP = [
   // Inline styles are used by React (styled objects) and styles.css; scripts must be self only.
   "style-src 'self' 'unsafe-inline'",
   "script-src 'self'",
-  "connect-src 'self'",
+  // YouTube oEmbed for link-card previews; meta API stays same-origin.
+  "connect-src 'self' https://www.youtube.com",
   "frame-ancestors 'self'",
   "base-uri 'self'",
   "form-action 'self'",
@@ -93,11 +94,34 @@ function resolveSafeFilePath(requestPath) {
   return resolved;
 }
 
+// Lightweight per-process rate limit for /api/meta (local server only).
+const META_RATE_WINDOW_MS = 60_000;
+const META_RATE_MAX = 60;
+const metaRateHits = [];
+
+function allowMetaRequest() {
+  const now = Date.now();
+  while (metaRateHits.length > 0 && now - metaRateHits[0] > META_RATE_WINDOW_MS) {
+    metaRateHits.shift();
+  }
+  if (metaRateHits.length >= META_RATE_MAX) {
+    return false;
+  }
+  metaRateHits.push(now);
+  return true;
+}
+
 // ── Simple static file server ─────────────────────────────────────────────
 function createServer() {
   return http.createServer(async (req, res) => {
     // ── /api/meta — link metadata endpoint ────────────────────────────────
     if (req.method === "GET" && (req.url ?? "").split("?")[0] === "/api/meta") {
+      if (!allowMetaRequest()) {
+        setSecurityHeaders(res, { includeCsp: false });
+        res.writeHead(429, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Too many requests" }));
+        return;
+      }
       const urlParam = new URL(req.url, "http://localhost").searchParams.get("url");
       if (!urlParam || !/^https?:\/\//.test(urlParam)) {
         setSecurityHeaders(res, { includeCsp: false });

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getLinkPreview } from "../core/linkPreview";
 import { fetchPageMeta, type PageMeta } from "../core/fetchMeta";
+import { isSafeImageSrc } from "../core/safeUrl";
 
 interface Props {
   url: string;
@@ -64,12 +65,13 @@ export function LinkPreviewDisplay({ url }: Props) {
 
   const title = meta?.title ?? syncPreview.title;
   const subtitle = meta?.description ?? syncPreview.subtitle;
-  const imageUrl = meta?.image ?? syncPreview.imageUrl;
+  const rawImage = meta?.image ?? syncPreview.imageUrl;
+  const imageUrl = rawImage && isSafeImageSrc(rawImage) ? rawImage : null;
 
   return (
     <div className="link-preview">
       {imageUrl ? (
-        <img src={imageUrl} alt={title} className="link-preview-image" />
+        <img src={imageUrl} alt={title} className="link-preview-image" referrerPolicy="no-referrer" />
       ) : null}
       <div className="link-preview-copy">
         <div className="link-preview-title">{title}</div>

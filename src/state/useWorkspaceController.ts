@@ -21,18 +21,19 @@ const EMPTY_STATE: AppState = {
 
 const UNDO_LIMIT = 10;
 const BOARD_TITLE_DEBOUNCE_MS = 600;
-
-type PendingBoardRename = {
-  boardId: string;
-  newTitle: string;
-  oldSlug: string;
-  newSlug: string;
-};
+/** Merge successive markdown keystrokes into one undo step. */
+const MARKDOWN_UNDO_IDLE_MS = 800;
 
 type BoardRenameBarrier = {
   /** Resolves once the in-flight directory rename has settled. */
   promise: Promise<void>;
   resolve: () => void;
+};
+
+type MarkdownUndoSession = {
+  boardId: string;
+  cardId: string;
+  timer: ReturnType<typeof setTimeout>;
 };
 
 type UndoSnapshot = {
@@ -224,6 +225,8 @@ export function useWorkspaceController() {
   // autosave effect awaits this so it never persists a board.json whose slug
   // doesn't match the on-disk directory.
   const renameBarrierRef = useRef<BoardRenameBarrier | null>(null);
+  // Coalesce typing in a note/todo into a single undo entry.
+  const markdownUndoSessionRef = useRef<MarkdownUndoSession | null>(null);
 
   // Keep committedSlugRef in sync when a vault is opened or a board is created.
   // Also drop entries for boards that have been removed from state (e.g. after
@@ -246,13 +249,17 @@ export function useWorkspaceController() {
     }
   }, [state.boards]);
 
-  // Clear any pending rename timers on unmount.
+  // Clear any pending rename / markdown-undo timers on unmount.
   useEffect(() => {
     return () => {
       for (const timer of pendingTitleTimersRef.current.values()) {
         clearTimeout(timer);
       }
       pendingTitleTimersRef.current.clear();
+      if (markdownUndoSessionRef.current) {
+        clearTimeout(markdownUndoSessionRef.current.timer);
+        markdownUndoSessionRef.current = null;
+      }
     };
   }, []);
 
@@ -517,8 +524,19 @@ export function useWorkspaceController() {
     return state.boards[state.currentBoardId] ?? null;
   }, [state.boards, state.currentBoardId]);
 
-  const updateBoardBundle = useCallback((boardId: string, nextBundle: BoardBundle) => {
-    pushUndo();
+  /**
+   * Replace one board bundle. By default records an undo snapshot first.
+   * Pass `{ recordUndo: false }` for high-frequency or non-semantic updates
+   * (viewport pan/zoom, z-order bring-to-front, in-progress typing).
+   */
+  const updateBoardBundle = useCallback((
+    boardId: string,
+    nextBundle: BoardBundle,
+    options?: { recordUndo?: boolean },
+  ) => {
+    if (options?.recordUndo !== false) {
+      pushUndo();
+    }
     setState((current) => ({
       ...current,
       boards: {
@@ -529,8 +547,14 @@ export function useWorkspaceController() {
     }));
   }, [pushUndo]);
 
-  const updateWorkspaceAndBoards = useCallback((input: { workspace?: AppState["workspace"]; bundles?: Record<string, BoardBundle> }) => {
-    pushUndo();
+  const updateWorkspaceAndBoards = useCallback((input: {
+    workspace?: AppState["workspace"];
+    bundles?: Record<string, BoardBundle>;
+    recordUndo?: boolean;
+  }) => {
+    if (input.recordUndo !== false) {
+      pushUndo();
+    }
     setState((current) => ({
       ...current,
       workspace: input.workspace ?? current.workspace,
@@ -761,10 +785,47 @@ export function useWorkspaceController() {
     updateBoardBundle(boardId, replaceBoardBundle(bundle, patchCard(bundle.board, cardId, updater)));
   }, [updateBoardBundle]);
 
-  const updateCardMarkdown = useCallback((boardId: string, cardId: string, markdown: string) => {
+  /**
+   * Apply many card patches in one undo step (e.g. multi-select drag end).
+   */
+  const updateCards = useCallback((
+    boardId: string,
+    updates: Array<{ cardId: string; updater: (card: CardMeta) => CardMeta }>,
+  ) => {
+    if (updates.length === 0) {
+      return;
+    }
     const bundle = getBoard(stateRef.current, boardId);
-    updateBoardBundle(boardId, setCardDocument(bundle, cardId, markdown));
+    let nextBoard = bundle.board;
+    for (const { cardId, updater } of updates) {
+      nextBoard = patchCard(nextBoard, cardId, updater);
+    }
+    updateBoardBundle(boardId, replaceBoardBundle(bundle, nextBoard));
   }, [updateBoardBundle]);
+
+  const updateCardMarkdown = useCallback((boardId: string, cardId: string, markdown: string) => {
+    const session = markdownUndoSessionRef.current;
+    const sameSession = session && session.boardId === boardId && session.cardId === cardId;
+    if (!sameSession) {
+      // First keystroke of a typing burst: snapshot once, then soft-update.
+      pushUndo();
+    } else {
+      clearTimeout(session.timer);
+    }
+
+    const bundle = getBoard(stateRef.current, boardId);
+    updateBoardBundle(boardId, setCardDocument(bundle, cardId, markdown), { recordUndo: false });
+
+    const timer = setTimeout(() => {
+      if (
+        markdownUndoSessionRef.current?.boardId === boardId &&
+        markdownUndoSessionRef.current?.cardId === cardId
+      ) {
+        markdownUndoSessionRef.current = null;
+      }
+    }, MARKDOWN_UNDO_IDLE_MS);
+    markdownUndoSessionRef.current = { boardId, cardId, timer };
+  }, [pushUndo, updateBoardBundle]);
 
   const updateBoardCardTitle = useCallback((boardId: string, cardId: string, title: string) => {
     const latestState = stateRef.current;
@@ -826,46 +887,126 @@ export function useWorkspaceController() {
       return;
     }
     const bundle = getBoard(stateRef.current, boardId);
-    updateBoardBundle(boardId, replaceBoardBundle(bundle, moveCardsToFront(bundle.board, cardIds)));
+    // Z-order for hit-testing while dragging is not a user-facing "edit" —
+    // keep it out of the undo stack so Cmd+Z undoes content, not stacking.
+    updateBoardBundle(
+      boardId,
+      replaceBoardBundle(bundle, moveCardsToFront(bundle.board, cardIds)),
+      { recordUndo: false },
+    );
   }, [updateBoardBundle]);
 
-  const moveCardByDrag = useCallback((payload: DragCardPayload, destination: { boardId: string; position?: Point }) => {
-    const latestState = stateRef.current;
-    const sourceBundle = getBoard(latestState, payload.sourceBoardId);
-    const movingCard = getCard(sourceBundle.board, payload.cardId);
-    const sourceAfterRemoval = payload.sourceBoardId === destination.boardId ? sourceBundle : removeCardFromBoard(sourceBundle, payload.cardId);
-    let destinationBundle = payload.sourceBoardId === destination.boardId ? sourceAfterRemoval : getBoard(latestState, destination.boardId);
-    if (payload.sourceBoardId !== destination.boardId) {
-      destinationBundle = addCardToBoard(destinationBundle, {
-        ...movingCard,
-        parentId: null,
-      });
-      if (sourceBundle.documents[payload.cardId]) {
-        destinationBundle = {
-          ...destinationBundle,
-          documents: {
-            ...destinationBundle.documents,
-            [payload.cardId]: sourceBundle.documents[payload.cardId],
-          },
-        };
-      }
+  /**
+   * Move one or more cards (optionally across boards). Records a single undo
+   * snapshot for the whole batch. When crossing boards, image/file assets are
+   * copied into the destination board's assets/ folder.
+   */
+  const moveCardByDrag = useCallback(async (
+    payload: DragCardPayload | DragCardPayload[],
+    destination: { boardId: string; position?: Point },
+  ) => {
+    const payloads = Array.isArray(payload) ? payload : [payload];
+    if (payloads.length === 0) {
+      return;
     }
 
-    if (destination.position) {
-      destinationBundle = moveCardToRoot(destinationBundle, payload.cardId, destination.position);
+    const latestState = stateRef.current;
+    if (!latestState.workspace) {
+      return;
+    }
+
+    // Work on a mutable draft so multi-card moves compose correctly.
+    let draftBoards: Record<string, BoardBundle> = { ...latestState.boards };
+    const boardPaths = buildBoardPathMap(
+      boardsAtCommittedSlugs(latestState.boards, committedSlugRef.current),
+      latestState.workspace,
+    );
+
+    for (const item of payloads) {
+      const sourceBundle = draftBoards[item.sourceBoardId];
+      if (!sourceBundle) {
+        continue;
+      }
+      let movingCard: CardMeta;
+      try {
+        movingCard = getCard(sourceBundle.board, item.cardId);
+      } catch {
+        continue;
+      }
+      const crossBoard = item.sourceBoardId !== destination.boardId;
+
+      if (
+        crossBoard &&
+        vaultRef.current &&
+        (movingCard.type === "image" || movingCard.type === "file") &&
+        movingCard.assetPath
+      ) {
+        try {
+          const sourcePath = boardPaths[item.sourceBoardId];
+          const destPath = boardPaths[destination.boardId];
+          if (sourcePath && destPath) {
+            const newAssetPath = await vaultRef.current.copyAssetBetweenBoards(
+              sourcePath,
+              destPath,
+              movingCard.assetPath,
+            );
+            movingCard = { ...movingCard, assetPath: newAssetPath };
+          }
+        } catch (error) {
+          setError(error);
+          return;
+        }
+      }
+
+      const sourceAfterRemoval = crossBoard
+        ? removeCardFromBoard(sourceBundle, item.cardId)
+        : sourceBundle;
+      let destinationBundle = crossBoard
+        ? (draftBoards[destination.boardId] ?? getBoard({ ...latestState, boards: draftBoards }, destination.boardId))
+        : sourceAfterRemoval;
+
+      if (crossBoard) {
+        destinationBundle = addCardToBoard(destinationBundle, {
+          ...movingCard,
+          parentId: null,
+        });
+        if (sourceBundle.documents[item.cardId]) {
+          destinationBundle = {
+            ...destinationBundle,
+            documents: {
+              ...destinationBundle.documents,
+              [item.cardId]: sourceBundle.documents[item.cardId],
+            },
+          };
+        }
+      }
+
+      if (destination.position) {
+        // Offset stacked drops slightly so multi-move cards don't fully overlap.
+        const index = payloads.indexOf(item);
+        const position = {
+          x: destination.position.x + index * 24,
+          y: destination.position.y + index * 24,
+        };
+        destinationBundle = moveCardToRoot(destinationBundle, item.cardId, position);
+      }
+
+      draftBoards = {
+        ...draftBoards,
+        [item.sourceBoardId]: sourceAfterRemoval,
+        [destination.boardId]: destinationBundle,
+      };
     }
 
     pushUndo();
-    setState((current) => ({
-      ...current,
-      boards: {
-        ...current.boards,
-        [payload.sourceBoardId]: sourceAfterRemoval,
-        [destination.boardId]: destinationBundle,
-      },
+    const next: AppState = {
+      ...latestState,
+      boards: draftBoards,
       hasUnsavedChanges: true,
-    }));
-  }, [pushUndo]);
+    };
+    stateRef.current = next;
+    setState(next);
+  }, [pushUndo, setError]);
 
   const deleteSelectedCards = useCallback(async () => {
     const latestState = stateRef.current;
@@ -1071,28 +1212,69 @@ export function useWorkspaceController() {
     if (!snapshot) {
       return;
     }
-    setState((current) => ({
-      ...current,
-      workspace: snapshot.workspace,
-      boards: snapshot.boards,
-      currentBoardId: snapshot.currentBoardId,
-      selectedCardIds: [],
-      activeCardId: null,
-      connectFromCardId: null,
-      hasUnsavedChanges: true,
-    }));
-    // After restoring a snapshot, resync committed slugs to the in-memory
-    // slugs: the snapshot's slug is what we want on disk, and the next save
-    // will write to (and, if needed, a rename will reconcile) that path.
-    // Pending rename timers for boards whose slug reverted become no-ops
-    // because commitBoardRename compares against committedSlugRef.
-    committedSlugRef.current = new Map(
-      Object.entries(snapshot.boards).map(([id, b]) => [id, b.board.slug]),
-    );
+    // Cancel in-flight typing / rename sessions so they don't re-apply on top
+    // of the restored snapshot.
+    if (markdownUndoSessionRef.current) {
+      clearTimeout(markdownUndoSessionRef.current.timer);
+      markdownUndoSessionRef.current = null;
+    }
+    for (const timer of pendingTitleTimersRef.current.values()) {
+      clearTimeout(timer);
+    }
+    pendingTitleTimersRef.current.clear();
+
+    // Capture pre-undo slugs so we can reverse any directory renames that
+    // already landed on disk (committedSlugRef tracks disk truth).
+    const preUndoCommitted = new Map(committedSlugRef.current);
+    const preUndoState = stateRef.current;
+
+    // Apply snapshot and sync stateRef immediately so follow-up disk renames
+    // (which read stateRef) see the restored slugs before React re-renders.
+    setState((current) => {
+      const next: AppState = {
+        ...current,
+        workspace: snapshot.workspace,
+        boards: snapshot.boards,
+        currentBoardId: snapshot.currentBoardId,
+        selectedCardIds: [],
+        activeCardId: null,
+        connectFromCardId: null,
+        hasUnsavedChanges: true,
+      };
+      stateRef.current = next;
+      return next;
+    });
+
+    // Disk still has pre-undo directory names until we rename back. Keep
+    // committedSlugRef pointing at what is actually on disk so autosave
+    // writes to the real paths; schedule renames toward snapshot slugs.
+    committedSlugRef.current = preUndoCommitted;
+
+    if (vaultRef.current && preUndoState.workspace && snapshot.workspace) {
+      const renames: string[] = [];
+      for (const [boardId, snapBundle] of Object.entries(snapshot.boards)) {
+        const diskSlug = preUndoCommitted.get(boardId);
+        if (diskSlug && diskSlug !== snapBundle.board.slug) {
+          renames.push(boardId);
+        }
+      }
+      if (renames.length > 0) {
+        void (async () => {
+          for (const boardId of renames) {
+            try {
+              await commitBoardRename(boardId);
+            } catch {
+              // commitBoardRename already surfaces errors via setError.
+            }
+          }
+        })();
+      }
+    }
+
     if (snapshot.trashEntries && vaultRef.current) {
       void Promise.all(snapshot.trashEntries.map((entryId) => vaultRef.current!.restoreTrashEntry(entryId))).catch(setError);
     }
-  }, [setError]);
+  }, [commitBoardRename, setError]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -1152,11 +1334,19 @@ export function useWorkspaceController() {
   }, [currentBoard, scheduleDirectoryRename, state.boards, state.workspace, updateWorkspaceAndBoards]);
 
   const setViewport = useCallback((boardId: string, position: { x: number; y: number; zoom: number }) => {
-    const bundle = getBoard(stateRef.current, boardId);
-    updateBoardBundle(boardId, replaceBoardBundle(bundle, {
-      ...bundle.board,
-      viewport: position,
-    }));
+    const bundle = stateRef.current.boards[boardId];
+    if (!bundle) {
+      return;
+    }
+    // Pan/zoom is continuous navigation — never push undo frames.
+    updateBoardBundle(
+      boardId,
+      replaceBoardBundle(bundle, {
+        ...bundle.board,
+        viewport: position,
+      }),
+      { recordUndo: false },
+    );
   }, [updateBoardBundle]);
 
   const readAssetUrl = useCallback(async (boardId: string, assetPath: string) => {
@@ -1204,6 +1394,7 @@ export function useWorkspaceController() {
     selectCard,
     clearSelection,
     updateCard,
+    updateCards,
     updateCardMarkdown,
     updateBoardCardTitle,
     bringCardsToFront,

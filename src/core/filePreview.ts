@@ -2,15 +2,19 @@ export interface FilePreviewMeta {
   extension: string;
   label: string;
   canRenderInline: boolean;
-  kind: "pdf" | "document" | "presentation" | "spreadsheet" | "text" | "media" | "other";
+  kind: "pdf" | "document" | "presentation" | "spreadsheet" | "text" | "media" | "html" | "other";
 }
 
 const DOCUMENT_EXTENSIONS = new Set(["doc", "docx", "pages", "rtf"]);
 const PRESENTATION_EXTENSIONS = new Set(["ppt", "pptx", "key"]);
 const SPREADSHEET_EXTENSIONS = new Set(["xls", "xlsx", "csv", "numbers"]);
-const TEXT_EXTENSIONS = new Set(["txt", "md", "json", "html", "htm", "csv"]);
+// html/htm intentionally excluded from inline preview — blob iframe would be
+// same-origin and could execute scripts against the app. Users can still open
+// the file via the download/open link.
+const TEXT_EXTENSIONS = new Set(["txt", "md", "json", "csv"]);
 const MEDIA_EXTENSIONS = new Set(["mp4", "webm", "mp3", "wav", "ogg"]);
-const INLINE_EXTENSIONS = new Set(["pdf", "txt", "md", "json", "html", "htm", "csv", "mp4", "webm", "mp3", "wav", "ogg"]);
+const INLINE_EXTENSIONS = new Set(["pdf", "txt", "md", "json", "csv", "mp4", "webm", "mp3", "wav", "ogg"]);
+const HTML_EXTENSIONS = new Set(["html", "htm"]);
 
 export function getFileExtension(fileName: string): string {
   const segments = fileName.toLowerCase().split(".");
@@ -64,6 +68,15 @@ export function getFilePreviewMeta(input: { fileName: string; mimeType: string }
       label: extension.toUpperCase(),
       canRenderInline: true,
       kind: "spreadsheet",
+    };
+  }
+
+  if (HTML_EXTENSIONS.has(extension) || lowerMimeType === "text/html") {
+    return {
+      extension,
+      label: "HTML",
+      canRenderInline: false,
+      kind: "html",
     };
   }
 

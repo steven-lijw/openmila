@@ -1,4 +1,5 @@
 import { createWorkspace } from "../core/model";
+import { sanitizeAssetFileName, splitSafePath } from "../core/pathUtils";
 import { loadRecentVaultHandle, saveRecentVaultHandle } from "./indexedDb";
 import type { BoardBundle, BoardFile, WorkspaceFile } from "../types";
 
@@ -13,7 +14,7 @@ async function ensureDirectory(
 }
 
 function splitPath(path: string): string[] {
-  return path.split("/").filter((part) => part.trim().length > 0);
+  return splitSafePath(path);
 }
 
 async function getDirectoryHandleByPath(
@@ -321,7 +322,8 @@ export class BrowserFsVault {
 
   async importAsset(boardPath: string, file: File, preferredName?: string): Promise<string> {
     const assetsDirectory = await getDirectoryHandleByPath(this.rootHandle, `${boardPath}/assets`, true);
-    const name = preferredName ?? `${Date.now()}-${file.name}`;
+    const safePreferred = preferredName ? sanitizeAssetFileName(preferredName) : null;
+    const name = safePreferred ?? `${Date.now()}-${sanitizeAssetFileName(file.name)}`;
     const handle = await assetsDirectory.getFileHandle(name, { create: true });
     const writable = await handle.createWritable();
     await writable.write(file);
@@ -329,7 +331,29 @@ export class BrowserFsVault {
     return `assets/${name}`;
   }
 
+  /**
+   * Copy an asset file from one board folder to another. Returns the new
+   * vault-relative asset path (`assets/<name>`) under the destination board.
+   * Used when moving image/file cards across boards so previews keep working.
+   */
+  async copyAssetBetweenBoards(
+    sourceBoardPath: string,
+    destBoardPath: string,
+    assetPath: string,
+  ): Promise<string> {
+    // assetPath is typically "assets/foo.png" relative to the source board.
+    const sourceFull = `${sourceBoardPath}/${assetPath}`;
+    const sourceFile = await getFileHandleByPath(this.rootHandle, sourceFull, false);
+    const file = await sourceFile.getFile();
+    const baseName = sanitizeAssetFileName(assetPath.split("/").pop() ?? file.name);
+    return this.importAsset(destBoardPath, file, `${Date.now()}-${baseName}`);
+  }
+
   async readAssetUrl(boardPath: string, assetPath: string): Promise<string> {
+    // Reject absolute-looking or parent-escaping asset paths before join.
+    if (!assetPath || assetPath.startsWith("/") || assetPath.includes("..")) {
+      throw new Error("Invalid asset path.");
+    }
     const fullPath = `${boardPath}/${assetPath}`;
     const handle = await getFileHandleByPath(this.rootHandle, fullPath, false);
     const file = await handle.getFile();

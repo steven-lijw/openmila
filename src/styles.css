@@ -500,6 +500,42 @@ button {
   transition: box-shadow 80ms ease, transform 80ms ease;
 }
 
+/* Legacy column cards (read-only shell) */
+.column-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 2px;
+  height: 100%;
+  min-height: 0;
+}
+
+.column-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.column-card-count {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.column-card-children {
+  margin: 0;
+  padding: 0 0 0 14px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  overflow: hidden;
+}
+
+.column-card-children li {
+  margin: 2px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Color bar above cards */
 .color-bar {
   display: flex;

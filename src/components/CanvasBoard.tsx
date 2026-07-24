@@ -4,6 +4,7 @@ import { formatFileSize, getFilePreviewMeta } from "../core/filePreview";
 import { createId } from "../core/ids";
 import { LinkPreviewDisplay } from "./LinkPreviewDisplay";
 import { renderMarkdown } from "../core/markdown";
+import { normalizeSafeHttpUrl } from "../core/safeUrl";
 import { parseTodoMarkdown, stringifyTodoMarkdown } from "../core/todoMarkdown";
 import { CARD_COLORS, BOARD_COLORS } from "../core/model";
 import type { BoardBundle, CardMeta, DragCardPayload, DragToolPayload, Point } from "../types";
@@ -18,10 +19,17 @@ interface CanvasBoardProps {
   onSelectCard: (cardId: string, multi: boolean) => void;
   onClearSelection: () => void;
   onUpdateCard: (cardId: string, updater: (card: CardMeta) => CardMeta) => void;
+  onUpdateCards: (
+    updates: Array<{ cardId: string; updater: (card: CardMeta) => CardMeta }>,
+  ) => void;
   onUpdateMarkdown: (cardId: string, markdown: string) => void;
   onUpdateBoardCardTitle: (boardId: string, cardId: string, title: string) => void;
   onBringCardsToFront: (cardIds: string[]) => void;
-  onMoveToBoard: (payload: DragCardPayload, boardId: string, position: Point) => void;
+  onMoveToBoard: (
+    payload: DragCardPayload | DragCardPayload[],
+    boardId: string,
+    position: Point,
+  ) => void;
   onStartConnection: (cardId: string) => void;
   onCancelConnection: () => void;
   onFinishConnection: (cardId: string) => void;
@@ -46,7 +54,11 @@ interface CardRendererProps {
   onUpdateCard: (cardId: string, updater: (card: CardMeta) => CardMeta) => void;
   onUpdateMarkdown: (cardId: string, markdown: string) => void;
   onUpdateBoardCardTitle: (boardId: string, cardId: string, title: string) => void;
-  onMoveToBoard: (payload: DragCardPayload, boardId: string, position: Point) => void;
+  onMoveToBoard: (
+    payload: DragCardPayload | DragCardPayload[],
+    boardId: string,
+    position: Point,
+  ) => void;
   onStartConnection: (cardId: string, anchorPoint: Point) => void;
   onFinishConnection: (cardId: string) => void;
   onOpenBoard: (childBoardId: string) => void;
@@ -115,12 +127,13 @@ function renderEditableContent(input: {
   markdown: string;
   assetUrl?: string;
   isEditable: boolean;
+  allCards?: CardMeta[];
   onUpdateCard: (updater: (card: CardMeta) => CardMeta) => void;
   onUpdateMarkdown: (markdown: string) => void;
   onUpdateBoardCardTitle?: (title: string) => void;
   onTextareaRef?: (ref: HTMLTextAreaElement | null) => void;
 }) {
-  const { card, markdown, assetUrl, isEditable, onUpdateCard, onUpdateMarkdown, onUpdateBoardCardTitle } = input;
+  const { card, markdown, assetUrl, isEditable, allCards, onUpdateCard, onUpdateMarkdown, onUpdateBoardCardTitle } = input;
 
   if (card.type === "note") {
     return isEditable ? (
@@ -200,7 +213,13 @@ function renderEditableContent(input: {
           <>
             <div className="file-preview-area">
               {preview.kind === "pdf" ? (
-                <iframe src={assetUrl} title={card.title} className="file-preview-frame" />
+                <iframe
+                  src={assetUrl}
+                  title={card.title}
+                  className="file-preview-frame"
+                  sandbox=""
+                  referrerPolicy="no-referrer"
+                />
               ) : null}
               {preview.kind === "media" && card.mimeType.startsWith("video/") ? (
                 <video src={assetUrl} controls className="file-preview-media" />
@@ -208,16 +227,38 @@ function renderEditableContent(input: {
               {preview.kind === "media" && card.mimeType.startsWith("audio/") ? (
                 <audio src={assetUrl} controls className="file-preview-audio" />
               ) : null}
-              {preview.kind !== "pdf" && preview.kind !== "media" && preview.canRenderInline ? (
-                <iframe src={assetUrl} title={card.title} className="file-preview-frame" />
+              {/* Text-like inline previews: sandbox with no script/same-origin. */}
+              {preview.kind === "text" && preview.canRenderInline ? (
+                <iframe
+                  src={assetUrl}
+                  title={card.title}
+                  className="file-preview-frame"
+                  sandbox=""
+                  referrerPolicy="no-referrer"
+                />
               ) : null}
-              {preview.kind !== "pdf" && preview.kind !== "media" ? (
+              {preview.kind === "html" || (!preview.canRenderInline && preview.kind !== "pdf" && preview.kind !== "media") ? (
                 <div className="file-preview-fallback">
                   <div className="file-preview-title">{card.title}</div>
                   <div className="file-preview-copy">
-                    Some formats depend on browser-native preview support. If this area looks empty, open the original file.
+                    {preview.kind === "html"
+                      ? "HTML files are not previewed inline for security. Open the original file instead."
+                      : "Some formats depend on browser-native preview support. If this area looks empty, open the original file."}
                   </div>
                 </div>
+              ) : null}
+              {preview.kind !== "pdf" &&
+              preview.kind !== "media" &&
+              preview.kind !== "text" &&
+              preview.kind !== "html" &&
+              preview.canRenderInline ? (
+                <iframe
+                  src={assetUrl}
+                  title={card.title}
+                  className="file-preview-frame"
+                  sandbox=""
+                  referrerPolicy="no-referrer"
+                />
               ) : null}
             </div>
             <a className="file-open-link" href={assetUrl} target="_blank" rel="noreferrer">
@@ -266,7 +307,32 @@ function renderEditableContent(input: {
     );
   }
 
-  return <div className="removed-card">Column has been removed</div>;
+  if (card.type === "column") {
+    // Legacy/partial column support: show title + child titles so vaults that
+    // still contain columns remain readable (full column DnD is not in toolbar).
+    const childById = new Map((allCards ?? []).map((c) => [c.id, c]));
+    const childTitles = card.childCardIds
+      .map((id) => childById.get(id)?.title)
+      .filter((title): title is string => title !== undefined);
+    return (
+      <div className="column-card-body">
+        <div className="column-card-title">{card.title || "Column"}</div>
+        <div className="column-card-count">
+          {card.childCardIds.length} item{card.childCardIds.length === 1 ? "" : "s"}
+        </div>
+        {childTitles.length > 0 ? (
+          <ul className="column-card-children">
+            {childTitles.slice(0, 8).map((title, index) => (
+              <li key={`${card.id}-child-${index}`}>{title || "Untitled"}</li>
+            ))}
+            {childTitles.length > 8 ? <li>…</li> : null}
+          </ul>
+        ) : null}
+      </div>
+    );
+  }
+
+  return <div className="removed-card">Unknown card type</div>;
 }
 
 function NoteEditor(props: {
@@ -835,7 +901,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
       }
     };
 
-    const handleMouseUp = () => {
+    const handleMouseUp = (event: globalThis.MouseEvent) => {
       if (!draggingCardRef.current && !connectionPreviewRef.current &&
           !selectionBoxRef.current && !resizingCardRef.current &&
           !pendingDragRef.current) return;
@@ -858,9 +924,42 @@ export function CanvasBoard(props: CanvasBoardProps) {
           ([cardId, pos]) => !pointsEqual(pos, dc.startPositions[cardId]),
         );
         if (didMove) {
-          setCommittedPositions((current) => ({ ...current, ...dc.positions }));
-          for (const [cardId, position] of Object.entries(dc.positions)) {
-            propsRef.current.onUpdateCard(cardId, (card) => ({ ...card, position }));
+          // Drop onto a nested board card → move into that child board.
+          // Walk the full hit stack so a card being dragged on top of a board
+          // icon still resolves the board underneath.
+          const hitStack = document.elementsFromPoint(event.clientX, event.clientY);
+          let boardTarget: HTMLElement | null = null;
+          for (const node of hitStack) {
+            if (!(node instanceof Element)) {
+              continue;
+            }
+            const candidate = node.closest<HTMLElement>("[data-card-type='board'][data-child-board-id]");
+            if (candidate && candidate.dataset.cardId && !dc.cardIds.includes(candidate.dataset.cardId)) {
+              boardTarget = candidate;
+              break;
+            }
+          }
+          const targetChildBoardId = boardTarget?.dataset.childBoardId;
+          const targetCardId = boardTarget?.dataset.cardId;
+          const movingOntoBoard = Boolean(targetChildBoardId && targetCardId);
+
+          if (movingOntoBoard && targetChildBoardId) {
+            const sourceBoardId = propsRef.current.boardBundle.board.id;
+            const batch: DragCardPayload[] = dc.cardIds
+              .filter((cardId) => cardId !== targetCardId)
+              .map((cardId) => ({ kind: "card" as const, sourceBoardId, cardId }));
+            if (batch.length > 0) {
+              propsRef.current.onMoveToBoard(batch, targetChildBoardId, { x: 120, y: 120 });
+            }
+          } else {
+            setCommittedPositions((current) => ({ ...current, ...dc.positions }));
+            // Single undo step for multi-select moves.
+            propsRef.current.onUpdateCards(
+              Object.entries(dc.positions).map(([cardId, position]) => ({
+                cardId,
+                updater: (card: CardMeta) => ({ ...card, position }),
+              })),
+            );
           }
         }
       }
@@ -1492,6 +1591,9 @@ function CardRenderer(props: CardRendererProps) {
     <div
       ref={cardRef}
       className={`canvas-card ${isSelected ? "selected" : ""} ${isBoardCard ? "type-board" : `type-${card.type}`} ${props.isDragging ? "dragging" : ""}`}
+      data-card-id={card.id}
+      data-card-type={card.type}
+      {...(card.type === "board" ? { "data-child-board-id": card.childBoardId } : {})}
       style={{
         left: props.displayPosition.x,
         top: props.displayPosition.y,
@@ -1531,7 +1633,12 @@ function CardRenderer(props: CardRendererProps) {
         if (card.type === "link" && !event.shiftKey) {
           if (isSelected) {
             if (card.url) {
-              window.open(card.url, "_blank");
+              const safe = normalizeSafeHttpUrl(card.url);
+              if (safe) {
+                window.open(safe, "_blank", "noopener,noreferrer");
+              } else {
+                props.onStartEditing();
+              }
             } else {
               props.onStartEditing();
             }
@@ -1596,6 +1703,7 @@ function CardRenderer(props: CardRendererProps) {
         card,
         markdown,
         assetUrl: props.assetUrls[card.id],
+        allCards: boardBundle.board.cards,
         isEditable: (card.type === "board" || card.type === "note" || card.type === "link" || card.type === "todo") ? isEditing : (isSelected || isEditing),
         onUpdateCard: (updater) => props.onUpdateCard(card.id, updater),
         onUpdateMarkdown: (nextMarkdown) => props.onUpdateMarkdown(card.id, nextMarkdown),
