@@ -3,10 +3,11 @@ import type { DragEvent, MouseEvent } from "react";
 import { formatFileSize, getFilePreviewMeta } from "../core/filePreview";
 import { createId } from "../core/ids";
 import { LinkPreviewDisplay } from "./LinkPreviewDisplay";
-import { renderMarkdown } from "../core/markdown";
+import { renderInlineMarkdown, renderMarkdown } from "../core/markdown";
 import { normalizeSafeHttpUrl } from "../core/safeUrl";
 import { parseTodoMarkdown, stringifyTodoMarkdown } from "../core/todoMarkdown";
 import { CARD_COLORS, BOARD_COLORS } from "../core/model";
+import { LiveMarkdownEditor, type LiveMarkdownFormatHandlers } from "./LiveMarkdownEditor";
 import type { BoardBundle, CardMeta, DragCardPayload, DragToolPayload, Point } from "../types";
 
 interface CanvasBoardProps {
@@ -115,7 +116,62 @@ function isInteractiveElement(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
     return false;
   }
-  return Boolean(target.closest("input, textarea, a, .connection-dot, .resize-handle, .color-bar, .edge-menu, .format-btn"));
+  return Boolean(
+    target.closest(
+      "input, textarea, a, .connection-dot, .resize-handle, .color-bar, .edge-menu, .format-btn, .live-md-editor, .todo-text-preview",
+    ),
+  );
+}
+
+/** True when overflow allows programmatic/native scrolling on that axis. */
+function isOverflowScrollable(value: string): boolean {
+  return value === "auto" || value === "scroll" || value === "overlay";
+}
+
+/**
+ * Find the nearest scrollable ancestor of `target` that is still inside `boundary`.
+ * Used so wheel-over-note scrolls card content instead of panning the canvas.
+ */
+function findScrollableAncestor(
+  target: EventTarget | null,
+  boundary: HTMLElement,
+): HTMLElement | null {
+  let el: HTMLElement | null = target instanceof HTMLElement ? target : null;
+  while (el && el !== boundary) {
+    const style = window.getComputedStyle(el);
+    const canY =
+      isOverflowScrollable(style.overflowY) && el.scrollHeight > el.clientHeight + 1;
+    const canX =
+      isOverflowScrollable(style.overflowX) && el.scrollWidth > el.clientWidth + 1;
+    if (canY || canX) {
+      return el;
+    }
+    el = el.parentElement;
+  }
+  return null;
+}
+
+/**
+ * Apply wheel deltas to a scrollable element when it still has room.
+ * Returns true if any scroll was absorbed (caller should not pan the canvas).
+ */
+function tryScrollElement(el: HTMLElement, deltaX: number, deltaY: number): boolean {
+  const maxTop = Math.max(0, el.scrollHeight - el.clientHeight);
+  const maxLeft = Math.max(0, el.scrollWidth - el.clientWidth);
+  const nextTop = Math.max(0, Math.min(maxTop, el.scrollTop + deltaY));
+  const nextLeft = Math.max(0, Math.min(maxLeft, el.scrollLeft + deltaX));
+  const scrolledY = nextTop !== el.scrollTop;
+  const scrolledX = nextLeft !== el.scrollLeft;
+  if (!scrolledY && !scrolledX) {
+    return false;
+  }
+  if (scrolledY) {
+    el.scrollTop = nextTop;
+  }
+  if (scrolledX) {
+    el.scrollLeft = nextLeft;
+  }
+  return true;
 }
 
 function pointsEqual(a: Point | undefined, b: Point | undefined) {
@@ -132,17 +188,17 @@ function renderEditableContent(input: {
   onUpdateMarkdown: (markdown: string) => void;
   onUpdateBoardCardTitle?: (title: string) => void;
   onTextareaRef?: (ref: HTMLTextAreaElement | null) => void;
+  onRegisterFormatHandlers?: (handlers: LiveMarkdownFormatHandlers | null) => void;
 }) {
   const { card, markdown, assetUrl, isEditable, allCards, onUpdateCard, onUpdateMarkdown, onUpdateBoardCardTitle } = input;
 
   if (card.type === "note") {
     return isEditable ? (
-      <NoteEditor
-        card={card}
+      <LiveMarkdownEditor
         markdown={markdown}
         onUpdateMarkdown={onUpdateMarkdown}
-        onUpdateCard={onUpdateCard}
         onTextareaRef={input.onTextareaRef ?? (() => {})}
+        onRegisterFormatHandlers={input.onRegisterFormatHandlers}
       />
     ) : markdown ? (
       <div
@@ -162,7 +218,14 @@ function renderEditableContent(input: {
           {items.map((item, index) => (
             <div key={`todo-preview-${index}`} className="todo-item todo-item-preview">
               <span className={`todo-checkbox-preview${item.checked ? " checked" : ""}`} />
-              <span className={`todo-text-preview${item.text ? "" : " empty"}`}>{item.text || "New task"}</span>
+              {item.text ? (
+                <span
+                  className="todo-text-preview markdown-inline"
+                  dangerouslySetInnerHTML={{ __html: renderInlineMarkdown(item.text) }}
+                />
+              ) : (
+                <span className="todo-text-preview empty">New task</span>
+              )}
             </div>
           ))}
         </div>
@@ -335,69 +398,17 @@ function renderEditableContent(input: {
   return <div className="removed-card">Unknown card type</div>;
 }
 
-function NoteEditor(props: {
-  card: CardMeta;
-  markdown: string;
-  onUpdateMarkdown: (markdown: string) => void;
-  onUpdateCard: (updater: (card: CardMeta) => CardMeta) => void;
-  onTextareaRef: (ref: HTMLTextAreaElement | null) => void;
-}) {
-  const { card, markdown, onUpdateMarkdown, onTextareaRef } = props;
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-
-  const wrapSelection = (before: string, after: string) => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const selected = markdown.slice(start, end);
-    const next = markdown.slice(0, start) + before + selected + after + markdown.slice(end);
-    onUpdateMarkdown(next);
-    requestAnimationFrame(() => {
-      textarea.focus();
-      textarea.setSelectionRange(start + before.length, start + before.length + selected.length);
-    });
-  };
-
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    const mod = event.metaKey || event.ctrlKey;
-    if (mod && event.key === "b") {
-      event.preventDefault();
-      wrapSelection("**", "**");
-    } else if (mod && event.key === "i") {
-      event.preventDefault();
-      wrapSelection("*", "*");
-    } else if (mod && event.shiftKey && event.key === "x") {
-      event.preventDefault();
-      wrapSelection("~~", "~~");
-    }
-  };
-
-  return (
-    <textarea
-      ref={(el) => {
-        textareaRef.current = el;
-        onTextareaRef(el);
-      }}
-      className="card-textarea"
-      value={markdown}
-      placeholder="Start writing…"
-      onChange={(event) => onUpdateMarkdown(event.target.value)}
-      onKeyDown={handleKeyDown}
-    />
-  );
-}
-
 function TodoList(props: {
   card: CardMeta;
   items: ReturnType<typeof parseTodoMarkdown>;
   onUpdateMarkdown: (markdown: string) => void;
   onUpdateCard: (updater: (card: CardMeta) => CardMeta) => void;
 }) {
-  const { card, items, onUpdateMarkdown, onUpdateCard } = props;
+  const { card, items, onUpdateMarkdown } = props;
   const listRef = useRef<HTMLDivElement | null>(null);
-  const pendingFocusIndexRef = useRef<number | null>(null);
+  const pendingFocusIndexRef = useRef<number | null>(0);
   const [focusNonce, setFocusNonce] = useState(0);
+  const [focusedIndex, setFocusedIndex] = useState<number | null>(0);
   const focusRetryRef = useRef(0);
 
   // Stable per-slot React keys. `parseTodoMarkdown` derives ids from the text
@@ -420,12 +431,10 @@ function TodoList(props: {
 
   const requestFocus = (index: number) => {
     pendingFocusIndexRef.current = index;
+    setFocusedIndex(index);
     focusRetryRef.current = 0;
     setFocusNonce((current) => current + 1);
   };
-
-  // NoteEditor, TodoList: auto-resize disabled to prevent render loops
-  // Card heights grow via user resize handle only
 
   useLayoutEffect(() => {
     const pendingIndex = pendingFocusIndexRef.current;
@@ -437,7 +446,7 @@ function TodoList(props: {
       return;
     }
     const inputs = list.querySelectorAll<HTMLInputElement>(".todo-text-input");
-    const target = inputs[pendingIndex];
+    const target = inputs[0];
     if (target) {
       target.focus();
       pendingFocusIndexRef.current = null;
@@ -449,65 +458,116 @@ function TodoList(props: {
       focusRetryRef.current += 1;
       requestAnimationFrame(() => setFocusNonce((current) => current + 1));
     }
-  }, [focusNonce, items.length, card.size.height]);
+  }, [focusNonce, items.length, card.size.height, focusedIndex]);
 
   return (
-    <div ref={listRef} className="todo-list">
-      {items.map((item, index) => (
-        <label key={slotKeys[index]} className="todo-item">
-          <input
-            type="checkbox"
-            checked={item.checked}
-            onChange={(event) => {
-              const nextItems = items.slice();
-              nextItems[index] = { ...item, checked: event.target.checked };
-              onUpdateMarkdown(stringifyTodoMarkdown(nextItems));
-            }}
-          />
-          <input
-            className="todo-text-input"
-            value={item.text}
-            placeholder="New task"
-            onChange={(event) => {
-              const nextItems = items.slice();
-              nextItems[index] = { ...item, text: event.target.value };
-              onUpdateMarkdown(stringifyTodoMarkdown(nextItems));
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
+    <div
+      ref={listRef}
+      className="todo-list"
+      onMouseDown={(event) => event.stopPropagation()}
+    >
+      {items.map((item, index) => {
+        const isFocused = focusedIndex === index;
+        return (
+          <div key={slotKeys[index]} className="todo-item">
+            <input
+              type="checkbox"
+              checked={item.checked}
+              aria-label={item.text || "Task"}
+              onChange={(event) => {
                 const nextItems = items.slice();
-                nextItems.splice(index + 1, 0, { id: createId("todo"), checked: false, text: "" });
-                // Insert a fresh slot key at the same position so existing
-                // inputs keep their DOM identity (and focus).
-                slotKeysRef.current = [
-                  ...slotKeys.slice(0, index + 1),
-                  createId("todoslot"),
-                  ...slotKeys.slice(index + 1),
-                ];
-                requestFocus(index + 1);
+                nextItems[index] = { ...item, checked: event.target.checked };
                 onUpdateMarkdown(stringifyTodoMarkdown(nextItems));
-                return;
-              }
+              }}
+            />
+            {isFocused ? (
+              <input
+                className="todo-text-input"
+                value={item.text}
+                placeholder="New task"
+                onChange={(event) => {
+                  const nextItems = items.slice();
+                  nextItems[index] = { ...item, text: event.target.value };
+                  onUpdateMarkdown(stringifyTodoMarkdown(nextItems));
+                }}
+                onBlur={() => {
+                  // Defer so clicking another row can claim focus first.
+                  requestAnimationFrame(() => {
+                    setFocusedIndex((current) => (current === index ? null : current));
+                  });
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    const nextItems = items.slice();
+                    nextItems.splice(index + 1, 0, { id: createId("todo"), checked: false, text: "" });
+                    // Insert a fresh slot key at the same position so existing
+                    // inputs keep their DOM identity (and focus).
+                    slotKeysRef.current = [
+                      ...slotKeys.slice(0, index + 1),
+                      createId("todoslot"),
+                      ...slotKeys.slice(index + 1),
+                    ];
+                    requestFocus(index + 1);
+                    onUpdateMarkdown(stringifyTodoMarkdown(nextItems));
+                    return;
+                  }
 
-              if ((event.key === "Delete" || event.key === "Backspace") && item.text.trim() === "") {
-                event.preventDefault();
-                const nextItems = items.filter((_, i) => i !== index);
-                const normalizedItems =
-                  nextItems.length === 0 ? [{ id: createId("todo"), checked: false, text: "" }] : nextItems;
-                // Drop the slot key at this index.
-                if (nextItems.length === 0) {
-                  slotKeysRef.current = [createId("todoslot")];
-                } else {
-                  slotKeysRef.current = slotKeys.filter((_, i) => i !== index);
-                }
-                requestFocus(Math.max(index - 1, 0));
-                onUpdateMarkdown(stringifyTodoMarkdown(normalizedItems));
-              }
-            }}
-          />
-        </label>
-      ))}
+                  if ((event.key === "Delete" || event.key === "Backspace") && item.text.trim() === "") {
+                    event.preventDefault();
+                    const nextItems = items.filter((_, i) => i !== index);
+                    const normalizedItems =
+                      nextItems.length === 0 ? [{ id: createId("todo"), checked: false, text: "" }] : nextItems;
+                    // Drop the slot key at this index.
+                    if (nextItems.length === 0) {
+                      slotKeysRef.current = [createId("todoslot")];
+                    } else {
+                      slotKeysRef.current = slotKeys.filter((_, i) => i !== index);
+                    }
+                    requestFocus(Math.max(index - 1, 0));
+                    onUpdateMarkdown(stringifyTodoMarkdown(normalizedItems));
+                  }
+                }}
+              />
+            ) : item.text ? (
+              <span
+                className="todo-text-preview markdown-inline"
+                role="button"
+                tabIndex={0}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  requestFocus(index);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    requestFocus(index);
+                  }
+                }}
+                dangerouslySetInnerHTML={{ __html: renderInlineMarkdown(item.text) }}
+              />
+            ) : (
+              <span
+                className="todo-text-preview empty"
+                role="button"
+                tabIndex={0}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  requestFocus(index);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    requestFocus(index);
+                  }
+                }}
+              >
+                New task
+              </span>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -880,6 +940,22 @@ export function CanvasBoard(props: CanvasBoardProps) {
   rootCardsRef.current = rootCards;
 
   useEffect(() => {
+    const clearNativeTextSelection = () => {
+      window.getSelection()?.removeAllRanges();
+    };
+
+    const handleSelectStart = (event: Event) => {
+      // Block browser text selection during card drag / resize / marquee.
+      if (
+        pendingDragRef.current ||
+        draggingCardRef.current ||
+        resizingCardRef.current ||
+        selectionBoxRef.current
+      ) {
+        event.preventDefault();
+      }
+    };
+
     const handleMouseMove = (event: globalThis.MouseEvent) => {
       if (!draggingCardRef.current && !connectionPreviewRef.current &&
           !selectionBoxRef.current && !resizingCardRef.current &&
@@ -888,6 +964,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
       if (pendingDragRef.current && !draggingCardRef.current) {
         const pending = pendingDragRef.current;
         pendingDragRef.current = null;
+        clearNativeTextSelection();
         setDraggingCard({
           ...pending,
           positions: { ...pending.startPositions },
@@ -899,6 +976,9 @@ export function CanvasBoard(props: CanvasBoardProps) {
       const dc = draggingCardRef.current;
 
       if (dc) {
+        // Keep clearing any selection the browser may have started before React
+        // applied is-dragging / user-select:none.
+        clearNativeTextSelection();
         const deltaX = point.x - dc.startPointer.x;
         const deltaY = point.y - dc.startPointer.y;
 
@@ -985,6 +1065,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
       const rc = resizingCardRef.current;
 
       if (dc) {
+        clearNativeTextSelection();
         const didMove = Object.entries(dc.positions).some(
           ([cardId, pos]) => !pointsEqual(pos, dc.startPositions[cardId]),
         );
@@ -1078,9 +1159,11 @@ export function CanvasBoard(props: CanvasBoardProps) {
 
     window.addEventListener("mousemove", handleMouseMove);
     window.addEventListener("mouseup", handleMouseUp);
+    document.addEventListener("selectstart", handleSelectStart);
     return () => {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
+      document.removeEventListener("selectstart", handleSelectStart);
     };
   }, [rootCardMap]);
 
@@ -1125,12 +1208,12 @@ export function CanvasBoard(props: CanvasBoardProps) {
     }
 
     const handleWheel = (event: WheelEvent) => {
-      event.preventDefault();
       // Prefer ctrl/meta pinch-zoom (trackpad) and treat plain wheel as pan.
       // Also treat intentional zoom gestures that browsers mark with ctrlKey.
       const vp = viewportRef.current;
 
       if (event.ctrlKey || event.metaKey) {
+        event.preventDefault();
         const rect = canvas.getBoundingClientRect();
         const worldX = (event.clientX - rect.left - vp.x) / vp.zoom;
         const worldY = (event.clientY - rect.top - vp.y) / vp.zoom;
@@ -1141,6 +1224,15 @@ export function CanvasBoard(props: CanvasBoardProps) {
         return;
       }
 
+      // Over a note/todo/etc. with overflow: auto — scroll content first.
+      // Only pan the canvas once the inner scroller is at its edge.
+      const scrollable = findScrollableAncestor(event.target, canvas);
+      if (scrollable && tryScrollElement(scrollable, event.deltaX, event.deltaY)) {
+        event.preventDefault();
+        return;
+      }
+
+      event.preventDefault();
       applyViewport({
         x: vp.x - event.deltaX,
         y: vp.y - event.deltaY,
@@ -1486,7 +1578,11 @@ export function CanvasBoard(props: CanvasBoardProps) {
                     return;
                   }
 
+                  // Prevent native text selection while dragging cards (notes re-enable
+                  // user-select:text on body content, which otherwise paints blue ranges).
+                  event.preventDefault();
                   event.stopPropagation();
+                  window.getSelection()?.removeAllRanges();
 
                   const shouldKeepSelection = props.selectedCardIds.includes(cardMeta.id);
                   const movableIds =
@@ -1641,6 +1737,7 @@ function CardRenderer(props: CardRendererProps) {
   const isBoardCard = card.type === "board";
   const cardRef = useRef<HTMLDivElement | null>(null);
   const noteTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const formatHandlersRef = useRef<LiveMarkdownFormatHandlers | null>(null);
   const [isHovered, setIsHovered] = useState(false);
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1662,7 +1759,9 @@ function CardRenderer(props: CardRendererProps) {
   // Auto-focus input when entering edit mode
   useEffect(() => {
     if (isEditing && cardRef.current) {
-      const el = cardRef.current.querySelector<HTMLElement>(".card-textarea, .todo-text-input, .link-url-input");
+      const el = cardRef.current.querySelector<HTMLElement>(
+        ".live-md-source, .card-textarea, .todo-text-input, .link-url-input",
+      );
       el?.focus();
     }
   }, [isEditing]);
@@ -1794,6 +1893,7 @@ function CardRenderer(props: CardRendererProps) {
           markdown={markdown}
           onUpdateMarkdown={(nextMarkdown) => props.onUpdateMarkdown(card.id, nextMarkdown)}
           textareaRef={noteTextareaRef}
+          formatHandlersRef={formatHandlersRef}
         />
       ) : null}
       <div className="canvas-card-content">
@@ -1812,6 +1912,9 @@ function CardRenderer(props: CardRendererProps) {
             props.onUpdateBoardCardTitle(props.boardBundle.board.id, card.id, title),
           onTextareaRef: (ref) => {
             noteTextareaRef.current = ref;
+          },
+          onRegisterFormatHandlers: (handlers) => {
+            formatHandlersRef.current = handlers;
           },
         })}
       </div>
@@ -1856,10 +1959,16 @@ function FormatBar(props: {
   markdown: string;
   onUpdateMarkdown: (markdown: string) => void;
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
+  formatHandlersRef?: React.RefObject<LiveMarkdownFormatHandlers | null>;
 }) {
-  const { markdown, onUpdateMarkdown, textareaRef } = props;
+  const { markdown, onUpdateMarkdown, textareaRef, formatHandlersRef } = props;
 
   const wrapSelection = (before: string, after: string) => {
+    const live = formatHandlersRef?.current;
+    if (live) {
+      live.wrapSelection(before, after);
+      return;
+    }
     const textarea = textareaRef.current;
     if (!textarea) {
       return;
@@ -1876,6 +1985,11 @@ function FormatBar(props: {
   };
 
   const insertLinePrefix = (prefix: string) => {
+    const live = formatHandlersRef?.current;
+    if (live) {
+      live.insertLinePrefix(prefix);
+      return;
+    }
     const textarea = textareaRef.current;
     if (!textarea) {
       return;
@@ -1886,14 +2000,20 @@ function FormatBar(props: {
     onUpdateMarkdown(next);
   };
 
+  // preventDefault on mousedown keeps the active source field focused so
+  // selection/format handlers still see a live caret.
+  const keepFocus = (event: React.MouseEvent) => {
+    event.preventDefault();
+  };
+
   return (
     <div className="color-bar" style={{ top: "-34px", gap: "2px" }}>
-      <button type="button" className="format-btn" title="Bold" onClick={() => wrapSelection("**", "**")}><strong>B</strong></button>
-      <button type="button" className="format-btn" title="Italic" onClick={() => wrapSelection("*", "*")}><em>I</em></button>
-      <button type="button" className="format-btn" title="Strikethrough" onClick={() => wrapSelection("~~", "~~")}><s>S</s></button>
-      <button type="button" className="format-btn" title="Underline" onClick={() => wrapSelection("++", "++")}><u>U</u></button>
-      <button type="button" className="format-btn" title="Bullet list" onClick={() => insertLinePrefix("- ")}>•</button>
-      <button type="button" className="format-btn" title="Numbered list" onClick={() => insertLinePrefix("1. ")}>1.</button>
+      <button type="button" className="format-btn" title="Bold" onMouseDown={keepFocus} onClick={() => wrapSelection("**", "**")}><strong>B</strong></button>
+      <button type="button" className="format-btn" title="Italic" onMouseDown={keepFocus} onClick={() => wrapSelection("*", "*")}><em>I</em></button>
+      <button type="button" className="format-btn" title="Strikethrough" onMouseDown={keepFocus} onClick={() => wrapSelection("~~", "~~")}><s>S</s></button>
+      <button type="button" className="format-btn" title="Underline" onMouseDown={keepFocus} onClick={() => wrapSelection("++", "++")}><u>U</u></button>
+      <button type="button" className="format-btn" title="Bullet list" onMouseDown={keepFocus} onClick={() => insertLinePrefix("- ")}>•</button>
+      <button type="button" className="format-btn" title="Numbered list" onMouseDown={keepFocus} onClick={() => insertLinePrefix("1. ")}>1.</button>
     </div>
   );
 }

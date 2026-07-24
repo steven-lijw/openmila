@@ -179,7 +179,7 @@ button {
 
 .topbar {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
   padding: 0 20px;
@@ -198,13 +198,6 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-width: 0;
-}
-
-.topbar-center {
-  display: flex;
-  align-items: center;
-  justify-content: center;
   min-width: 0;
 }
 
@@ -238,45 +231,6 @@ button {
   width: 1px;
   height: 20px;
   background: var(--color-divider);
-}
-
-.board-title-shell {
-  display: flex;
-  align-items: center;
-  width: min(420px, 100%);
-  border-radius: var(--radius-md);
-  padding: 0;
-  background: #fff;
-  border: 1px solid var(--color-border);
-  box-shadow: none;
-}
-
-.board-title-shell.is-idle {
-  width: min(240px, 100%);
-  background: transparent;
-  border-color: transparent;
-}
-
-.board-title-input {
-  width: 100%;
-  min-width: 0;
-  border: none;
-  border-radius: var(--radius-md);
-  padding: 8px 14px;
-  background: transparent;
-  color: var(--color-text);
-  outline: none;
-  text-align: center;
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.board-title-input:disabled {
-  color: var(--color-text-faint);
-}
-
-.board-title-input::placeholder {
-  color: var(--color-text-faint);
 }
 
 .status-pill {
@@ -337,30 +291,70 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  vertical-align: middle;
 }
 
 .breadcrumb-link {
+  box-sizing: border-box;
   background: transparent;
   border: none;
-  padding: 0;
+  /* Shared metrics with rename input so switch doesn't jump */
+  height: 26px;
+  padding: 0 6px;
+  margin: 0;
   font: inherit;
+  font-size: 13px;
+  line-height: 26px;
   color: inherit;
   cursor: pointer;
-  transition: color 120ms ease;
+  border-radius: 6px;
+  transition: color 120ms ease, background 120ms ease;
 }
 
-.breadcrumb-link:hover:not(:disabled) {
+.breadcrumb-link:hover {
   color: var(--color-text);
+  background: rgba(28, 27, 25, 0.04);
 }
 
-.breadcrumb-link:disabled {
-  cursor: default;
+/* Current board — click to rename */
+.breadcrumb-link-current {
   color: var(--color-text);
   font-weight: 500;
 }
 
+.breadcrumb-link-current:hover {
+  background: rgba(28, 27, 25, 0.06);
+}
+
+/* Inline rename: same footprint as the label, minimal chrome */
+.breadcrumb-rename-input {
+  box-sizing: border-box;
+  height: 26px;
+  min-width: 4ch;
+  max-width: min(240px, 45vw);
+  margin: 0;
+  padding: 0 6px;
+  border: none;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 26px;
+  color: var(--color-text);
+  background: rgba(47, 111, 237, 0.08);
+  outline: none;
+  box-shadow: inset 0 0 0 1px rgba(47, 111, 237, 0.35);
+  caret-color: var(--color-primary);
+}
+
+.breadcrumb-rename-input::selection {
+  background: rgba(47, 111, 237, 0.28);
+  color: var(--color-text);
+}
+
 .breadcrumb-separator {
   color: var(--color-text-faint);
+  line-height: 26px;
 }
 
 .canvas-shell {
@@ -383,8 +377,18 @@ button {
   /* Do NOT add transform here — nests with .canvas-inner and causes Safari trails. */
 }
 
-.canvas-board.is-dragging {
+.canvas-board.is-dragging,
+.canvas-board.is-resizing {
   cursor: grabbing;
+}
+
+/* Card drag/resize: kill native text selection (note content re-enables user-select:text). */
+.canvas-board.is-dragging,
+.canvas-board.is-dragging *,
+.canvas-board.is-resizing,
+.canvas-board.is-resizing * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
 }
 
 /* Safari: SVG stroke redraw under a transformed parent can leave permanent ghosts. */
@@ -587,6 +591,14 @@ button {
   /* Avoid promoting a second GPU layer on top of viewport transform (Safari). */
   will-change: left, top;
   pointer-events: none;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+.canvas-card.dragging,
+.canvas-card.dragging * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
 }
 
 .canvas-card.selected.dragging {
@@ -818,7 +830,8 @@ button {
 }
 
 .card-textarea,
-.todo-text-input {
+.todo-text-input,
+.live-md-source {
   width: 100%;
   border: none;
   border-radius: 0;
@@ -827,15 +840,18 @@ button {
   color: var(--color-text);
   outline: none;
   cursor: grab;
+  user-select: text;
 }
 
 .canvas-card.selected .card-textarea,
-.canvas-card.selected .todo-text-input {
+.canvas-card.selected .todo-text-input,
+.canvas-card.selected .live-md-source {
   cursor: grab;
 }
 
 .canvas-card.selected .card-textarea:focus,
-.canvas-card.selected .todo-text-input:focus {
+.canvas-card.selected .todo-text-input:focus,
+.canvas-card.selected .live-md-source:focus {
   cursor: text;
 }
 
@@ -849,6 +865,7 @@ button {
   outline: none;
   font-size: inherit;
   font-family: inherit;
+  user-select: text;
 }
 
 .card-textarea {
@@ -860,7 +877,8 @@ button {
 
 .card-textarea::placeholder,
 .link-url-input::placeholder,
-.todo-text-input::placeholder {
+.todo-text-input::placeholder,
+.live-md-source::placeholder {
   color: var(--color-text-faint);
 }
 
@@ -871,14 +889,125 @@ button {
   flex: 1;
   overflow: auto;
   min-height: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .card-preview-empty {
   color: var(--color-text-faint);
 }
 
+/*
+ * Typora-style live note editor:
+ * - inactive blocks = rendered HTML (preview immediately after Enter)
+ * - active block = markdown source textarea
+ * - multi-block selection keeps render; only highlights blocks (no source flatten)
+ */
+.live-md-editor {
+  flex: 1;
+  min-height: 0;
+  max-width: 100%;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.5;
+  color: var(--color-text);
+  white-space: normal;
+  user-select: text;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  outline: none;
+}
+
+.live-md-editor.live-md-has-selection {
+  /* Avoid native text selection fighting with block selection chrome */
+  user-select: none;
+}
+
+.live-md-block {
+  min-width: 0;
+  max-width: 100%;
+  cursor: text;
+  border-radius: 4px;
+  padding: 2px 4px;
+  margin: 0;
+}
+
+/* Rendered blocks: kill extra vertical slack so click target ≈ one line */
+.live-md-block > :first-child {
+  margin-top: 0;
+}
+
+.live-md-block > :last-child {
+  margin-bottom: 0;
+}
+
+.live-md-block:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.live-md-block-empty {
+  min-height: 1.5em;
+}
+
+/* Document / multi-block selection — keep rendered content, Notion-like halo */
+.live-md-block.live-md-block-selected,
+.live-md-source.live-md-block-selected {
+  background: rgba(47, 111, 237, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(47, 111, 237, 0.35);
+}
+
+.live-md-block.live-md-block-selected:hover {
+  background: rgba(47, 111, 237, 0.18);
+}
+
+.live-md-source {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 1.5em;
+  max-width: 100%;
+  resize: none;
+  overflow: hidden;
+  line-height: 1.5;
+  font: inherit;
+  color: inherit;
+  padding: 2px 4px;
+  margin: 0;
+  border: none;
+  border-radius: 4px;
+  background: rgba(47, 111, 237, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(47, 111, 237, 0.18);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.live-md-tail {
+  flex: 1;
+  min-height: 12px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: text;
+  width: 100%;
+}
+
+.markdown-body {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .markdown-body p {
   margin: 0 0 4px;
+  max-width: 100%;
+}
+
+.markdown-body p:last-child {
+  margin-bottom: 0;
 }
 
 .markdown-body strong {
@@ -896,12 +1025,20 @@ button {
   padding: 1px 4px;
   font-family: monospace;
   font-size: 0.9em;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .markdown-body ul,
 .markdown-body ol {
   margin: 0 0 4px;
   padding-left: 20px;
+  max-width: 100%;
+}
+
+.markdown-body li {
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .markdown-body h1,
@@ -910,6 +1047,9 @@ button {
 .markdown-body h4 {
   margin: 0 0 4px;
   color: var(--color-text);
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
 }
 
 .markdown-body h1 { font-size: 1.25em; }
@@ -922,12 +1062,15 @@ button {
   padding-left: 10px;
   margin: 0 0 4px;
   color: var(--color-text-muted);
+  max-width: 100%;
 }
 
 .markdown-body a {
   color: var(--color-primary);
   text-decoration: underline;
   pointer-events: auto;
+  overflow-wrap: anywhere;
+  word-break: break-all;
 }
 
 .card-preview.markdown-body {
@@ -943,6 +1086,7 @@ button {
 .markdown-body img {
   max-width: 100%;
   height: auto;
+  display: block;
 }
 
 .markdown-body pre {
@@ -950,46 +1094,90 @@ button {
   border-radius: 4px;
   padding: 6px 8px;
   overflow-x: auto;
+  max-width: 100%;
   margin: 0 0 4px;
 }
 
 .markdown-body pre code {
   background: none;
   padding: 0;
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.markdown-body table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin: 0 0 4px;
+}
+
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid var(--color-border);
+  padding: 4px 8px;
+  text-align: left;
+}
+
+/* Inline markdown fragments (todo labels) */
+.markdown-inline {
+  line-height: 1.4;
+}
+
+.markdown-inline p {
+  display: inline;
+  margin: 0;
+}
+
+.markdown-inline a {
+  pointer-events: none;
 }
 
 .todo-list {
   display: grid;
   gap: 6px;
+  align-content: start;
+  flex: 1;
+  min-height: 0;
+  max-width: 100%;
+  overflow: auto;
 }
 
 .todo-item {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto minmax(0, 1fr);
   gap: 8px;
-  align-items: center;
+  align-items: start;
+  min-width: 0;
 }
 
 .todo-item input[type="checkbox"] {
-  margin: 0;
+  margin: 3px 0 0;
   accent-color: var(--color-ink);
+  flex-shrink: 0;
 }
 
 .todo-item-preview {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto minmax(0, 1fr);
   gap: 8px;
-  align-items: center;
+  align-items: start;
   pointer-events: none;
+  min-width: 0;
 }
 
 .todo-checkbox-preview {
   display: inline-block;
   width: 14px;
   height: 14px;
+  margin-top: 3px;
   border: 1.5px solid #c9c5bd;
   border-radius: 4px;
   background: #fff;
+  flex-shrink: 0;
 }
 
 .todo-checkbox-preview.checked {
@@ -1004,13 +1192,25 @@ button {
 .todo-text-preview {
   font-size: inherit;
   color: inherit;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+  line-height: 1.4;
+  cursor: text;
+  border-radius: 3px;
+  padding: 1px 0;
 }
 
 .todo-text-preview.empty {
   color: var(--color-text-faint);
+}
+
+.todo-text-input {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .image-card-body {
@@ -1506,19 +1706,16 @@ button {
   .topbar {
     grid-template-columns: 1fr;
     height: auto;
+    padding-top: 8px;
+    padding-bottom: 8px;
   }
 
   .topbar-left,
-  .topbar-center,
   .topbar-right {
     justify-content: flex-start;
   }
 
   .topbar-right {
     flex-wrap: wrap;
-  }
-
-  .board-title-shell {
-    width: 100%;
   }
 }

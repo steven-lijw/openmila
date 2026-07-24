@@ -1097,6 +1097,16 @@ export function useWorkspaceController() {
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
         return;
       }
+      // Note multi-block selection focuses a non-input root; Backspace/Delete must
+      // clear note content only — never remove the card component from the canvas.
+      if (
+        target instanceof Element &&
+        target.closest(
+          ".live-md-editor, .live-md-has-selection, .card-textarea, .todo-list, .link-url-input, [contenteditable='true']",
+        )
+      ) {
+        return;
+      }
 
       if (stateRef.current.selectedCardIds.length === 0) {
         return;

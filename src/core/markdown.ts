@@ -176,3 +176,12 @@ export function renderMarkdown(src: string): string {
   const raw = marked(src, { async: false }) as string;
   return sanitizeHtml(raw);
 }
+
+/** Inline-only markdown (no wrapping block tags). Used for todo item labels. */
+export function renderInlineMarkdown(src: string): string {
+  if (!src) {
+    return "";
+  }
+  const raw = marked.parseInline(src, { async: false }) as string;
+  return sanitizeHtml(raw);
+}

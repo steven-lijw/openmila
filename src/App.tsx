@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Toolbar } from "./components/Toolbar";
 import { CanvasBoard } from "./components/CanvasBoard";
 import { getBrowserSupport } from "./core/browserSupport";
@@ -13,6 +13,10 @@ export default function App() {
     : controller.state.hasUnsavedChanges
       ? "Unsaved"
       : "Saved";
+
+  /** Inline rename of the current board via the breadcrumb (last segment). */
+  const [renamingBoardId, setRenamingBoardId] = useState<string | null>(null);
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
 
   const openPrimaryVault = () => {
     if (support.preferredBackend === "folder") {
@@ -41,6 +45,30 @@ export default function App() {
     return path;
   }, [controller.currentBoard, controller.state.boards]);
 
+  // Leave rename mode when navigating to another board.
+  useEffect(() => {
+    const currentId = controller.currentBoard?.board.id ?? null;
+    if (renamingBoardId && renamingBoardId !== currentId) {
+      setRenamingBoardId(null);
+    }
+  }, [controller.currentBoard?.board.id, renamingBoardId]);
+
+  useEffect(() => {
+    if (!renamingBoardId) {
+      return;
+    }
+    const el = renameInputRef.current;
+    if (!el) {
+      return;
+    }
+    el.focus();
+    el.select();
+  }, [renamingBoardId]);
+
+  const finishRename = () => {
+    setRenamingBoardId(null);
+  };
+
   return (
     <div className="app-shell">
       <Toolbar />
@@ -54,34 +82,49 @@ export default function App() {
                 {boardPath.length > 0
                   ? boardPath.map((item, index) => {
                       const isLast = index === boardPath.length - 1;
+                      const isRenaming = isLast && renamingBoardId === item.id;
                       return (
                         <span key={item.id} className="breadcrumb-item">
-                          <button
-                            type="button"
-                            className="breadcrumb-link"
-                            onClick={() => controller.openChildBoard(item.id)}
-                            disabled={isLast}
-                          >
-                            {item.title}
-                          </button>
+                          {isRenaming ? (
+                            <input
+                              ref={renameInputRef}
+                              className="breadcrumb-rename-input"
+                              value={item.title}
+                              size={Math.max((item.title || "Untitled").length, 4)}
+                              aria-label="Rename board"
+                              onChange={(event) =>
+                                controller.updateCurrentBoardTitle(event.target.value)
+                              }
+                              onBlur={finishRename}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === "Escape") {
+                                  event.preventDefault();
+                                  (event.target as HTMLInputElement).blur();
+                                }
+                              }}
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              className={`breadcrumb-link${isLast ? " breadcrumb-link-current" : ""}`}
+                              title={isLast ? "Click to rename" : `Open ${item.title}`}
+                              onClick={() => {
+                                if (isLast) {
+                                  setRenamingBoardId(item.id);
+                                  return;
+                                }
+                                controller.openChildBoard(item.id);
+                              }}
+                            >
+                              {item.title || "Untitled"}
+                            </button>
+                          )}
                           {!isLast ? <span className="breadcrumb-separator">/</span> : null}
                         </span>
                       );
                     })
                   : "Workspace"}
               </span>
-            </div>
-          </div>
-
-          <div className="topbar-center">
-            <div className={`board-title-shell${controller.currentBoard ? "" : " is-idle"}`}>
-              <input
-                className="board-title-input"
-                value={controller.currentBoard?.board.title ?? ""}
-                onChange={(event) => controller.updateCurrentBoardTitle(event.target.value)}
-                placeholder={controller.currentBoard ? "Board title" : "No board open"}
-                disabled={!controller.currentBoard}
-              />
             </div>
           </div>
 
