@@ -512,6 +512,14 @@ function TodoList(props: {
   );
 }
 
+type Viewport = { x: number; y: number; zoom: number };
+
+const VIEWPORT_PERSIST_MS = 120;
+
+function viewportsEqual(a: Viewport, b: Viewport): boolean {
+  return a.x === b.x && a.y === b.y && a.zoom === b.zoom;
+}
+
 export function CanvasBoard(props: CanvasBoardProps) {
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const ignoreNextCanvasClickRef = useRef(false);
@@ -522,6 +530,11 @@ export function CanvasBoard(props: CanvasBoardProps) {
   const [assetUrls, setAssetUrls] = useState<Record<string, string>>({});
   const assetUrlsRef = useRef<Record<string, string>>({});
   assetUrlsRef.current = assetUrls;
+  // Local viewport so pan/zoom does not re-render App (topbar) every wheel tick.
+  const [viewport, setViewport] = useState<Viewport>(() => props.boardBundle.board.viewport);
+  const viewportRef = useRef(viewport);
+  viewportRef.current = viewport;
+  const viewportPersistTimerRef = useRef<number | null>(null);
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState<Point | null>(null);
   const [draggingCard, setDraggingCard] = useState<DraggingCardState | null>(null);
@@ -538,6 +551,57 @@ export function CanvasBoard(props: CanvasBoardProps) {
   const [editingCardId, setEditingCardId] = useState<string | null>(null);
   const [edgeMenuPos, setEdgeMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [localEdgeStyles, setLocalEdgeStyles] = useState<Record<string, { arrowDirection?: string; lineStyle?: string }>>({});
+
+  const applyViewport = useCallback((next: Viewport, options?: { persistImmediately?: boolean }) => {
+    const unchanged = viewportsEqual(viewportRef.current, next);
+    if (!unchanged) {
+      viewportRef.current = next;
+      setViewport(next);
+    }
+
+    if (viewportPersistTimerRef.current !== null) {
+      window.clearTimeout(viewportPersistTimerRef.current);
+      viewportPersistTimerRef.current = null;
+    }
+
+    if (options?.persistImmediately) {
+      // Always flush — even if local values already match (e.g. pan end after local updates).
+      propsRef.current.onViewportChange(viewportRef.current);
+      return;
+    }
+
+    if (unchanged) {
+      return;
+    }
+
+    // Debounce parent write so continuous zoom/pan doesn't thrash global state.
+    viewportPersistTimerRef.current = window.setTimeout(() => {
+      viewportPersistTimerRef.current = null;
+      propsRef.current.onViewportChange(viewportRef.current);
+    }, VIEWPORT_PERSIST_MS);
+  }, []);
+
+  // Reset viewport when navigating to a different board.
+  useEffect(() => {
+    if (viewportPersistTimerRef.current !== null) {
+      window.clearTimeout(viewportPersistTimerRef.current);
+      viewportPersistTimerRef.current = null;
+    }
+    const next = props.boardBundle.board.viewport;
+    viewportRef.current = next;
+    setViewport(next);
+  }, [props.boardBundle.board.id]);
+
+  // Flush pending viewport persistence on unmount.
+  useEffect(() => {
+    return () => {
+      if (viewportPersistTimerRef.current !== null) {
+        window.clearTimeout(viewportPersistTimerRef.current);
+        viewportPersistTimerRef.current = null;
+        propsRef.current.onViewportChange(viewportRef.current);
+      }
+    };
+  }, []);
 
   const getMinSize = (card: CardMeta | undefined) => {
     if (!card) {
@@ -725,9 +789,10 @@ export function CanvasBoard(props: CanvasBoardProps) {
   const screenToCanvas = (clientX: number, clientY: number): Point => {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return { x: 0, y: 0 };
+    const vp = viewportRef.current;
     return {
-      x: (clientX - rect.left - props.boardBundle.board.viewport.x) / props.boardBundle.board.viewport.zoom,
-      y: (clientY - rect.top - props.boardBundle.board.viewport.y) / props.boardBundle.board.viewport.zoom,
+      x: (clientX - rect.left - vp.x) / vp.zoom,
+      y: (clientY - rect.top - vp.y) / vp.zoom,
     };
   };
   const screenToCanvasRef = useRef(screenToCanvas);
@@ -769,8 +834,8 @@ export function CanvasBoard(props: CanvasBoardProps) {
     const x = rect.width / 2 - cx * zoom;
     const y = rect.height / 2 - cy * zoom;
 
-    propsRef.current.onViewportChange({ x, y, zoom });
-  }, [committedPositions, rootCards]);
+    applyViewport({ x, y, zoom }, { persistImmediately: true });
+  }, [applyViewport, committedPositions, rootCards]);
 
   const focusSelected = useCallback(() => {
     const p = propsRef.current;
@@ -798,8 +863,8 @@ export function CanvasBoard(props: CanvasBoardProps) {
     const x = rect.width / 2 - cx * zoom;
     const y = rect.height / 2 - cy * zoom;
 
-    propsRef.current.onViewportChange({ x, y, zoom });
-  }, [committedPositions, rootCardMap]);
+    applyViewport({ x, y, zoom }, { persistImmediately: true });
+  }, [applyViewport, committedPositions, rootCardMap]);
 
   const draggingCardRef = useRef(draggingCard);
   const connectionPreviewRef = useRef(connectionPreview);
@@ -997,6 +1062,18 @@ export function CanvasBoard(props: CanvasBoardProps) {
       }
 
       setDraggingCard(null);
+
+      // Safari can permanently retain border/shadow paint in composited layers after drag.
+      // Force a full layer rebuild of the canvas surface.
+      const surface = canvasRef.current;
+      if (surface) {
+        requestAnimationFrame(() => {
+          const prev = surface.style.transform;
+          surface.style.transform = "translateZ(0)";
+          void surface.offsetHeight;
+          surface.style.transform = prev;
+        });
+      }
     };
 
     window.addEventListener("mousemove", handleMouseMove);
@@ -1049,33 +1126,25 @@ export function CanvasBoard(props: CanvasBoardProps) {
 
     const handleWheel = (event: WheelEvent) => {
       event.preventDefault();
-      const p = propsRef.current;
+      // Prefer ctrl/meta pinch-zoom (trackpad) and treat plain wheel as pan.
+      // Also treat intentional zoom gestures that browsers mark with ctrlKey.
+      const vp = viewportRef.current;
 
-      if (event.ctrlKey) {
+      if (event.ctrlKey || event.metaKey) {
         const rect = canvas.getBoundingClientRect();
-        const worldX =
-          (event.clientX - rect.left - p.boardBundle.board.viewport.x) / p.boardBundle.board.viewport.zoom;
-        const worldY =
-          (event.clientY - rect.top - p.boardBundle.board.viewport.y) / p.boardBundle.board.viewport.zoom;
-        const nextZoom = Math.max(
-          0.4,
-          Math.min(1.8, p.boardBundle.board.viewport.zoom - event.deltaY * 0.01),
-        );
+        const worldX = (event.clientX - rect.left - vp.x) / vp.zoom;
+        const worldY = (event.clientY - rect.top - vp.y) / vp.zoom;
+        const nextZoom = Math.max(0.4, Math.min(1.8, vp.zoom - event.deltaY * 0.01));
         const nextX = event.clientX - rect.left - worldX * nextZoom;
         const nextY = event.clientY - rect.top - worldY * nextZoom;
-        p.onViewportChange({
-          ...p.boardBundle.board.viewport,
-          x: nextX,
-          y: nextY,
-          zoom: nextZoom,
-        });
+        applyViewport({ x: nextX, y: nextY, zoom: nextZoom });
         return;
       }
 
-      p.onViewportChange({
-        ...p.boardBundle.board.viewport,
-        x: p.boardBundle.board.viewport.x - event.deltaX,
-        y: p.boardBundle.board.viewport.y - event.deltaY,
+      applyViewport({
+        x: vp.x - event.deltaX,
+        y: vp.y - event.deltaY,
+        zoom: vp.zoom,
       });
     };
 
@@ -1083,7 +1152,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
     return () => {
       canvas.removeEventListener("wheel", handleWheel);
     };
-  }, []);
+  }, [applyViewport]);
 
   const edges = useMemo(() => {
     const result = props.boardBundle.board.edges
@@ -1167,7 +1236,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
   }, [committedPositions, connectionPreview, draggingCard, localEdgeStyles, props.boardBundle, props.boardBundle.board.edges, resizingCard, rootCardMap]);
 
   const viewportStyle = {
-    transform: `translate(${props.boardBundle.board.viewport.x}px, ${props.boardBundle.board.viewport.y}px) scale(${props.boardBundle.board.viewport.zoom})`,
+    transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
     transformOrigin: "0 0",
   };
 
@@ -1228,8 +1297,8 @@ export function CanvasBoard(props: CanvasBoardProps) {
           if (event.altKey) {
             setIsPanning(true);
             setPanStart({
-              x: event.clientX - props.boardBundle.board.viewport.x,
-              y: event.clientY - props.boardBundle.board.viewport.y,
+              x: event.clientX - viewportRef.current.x,
+              y: event.clientY - viewportRef.current.y,
             });
             return;
           }
@@ -1250,17 +1319,24 @@ export function CanvasBoard(props: CanvasBoardProps) {
             return;
           }
 
-          props.onViewportChange({
-            ...props.boardBundle.board.viewport,
+          applyViewport({
             x: event.clientX - panStart.x,
             y: event.clientY - panStart.y,
+            zoom: viewportRef.current.zoom,
           });
         }}
         onMouseUp={() => {
+          if (isPanning) {
+            // Flush viewport so save state is consistent after pan ends.
+            applyViewport(viewportRef.current, { persistImmediately: true });
+          }
           setIsPanning(false);
           setPanStart(null);
         }}
         onMouseLeave={() => {
+          if (isPanning) {
+            applyViewport(viewportRef.current, { persistImmediately: true });
+          }
           setIsPanning(false);
           setPanStart(null);
         }}
@@ -1274,10 +1350,10 @@ export function CanvasBoard(props: CanvasBoardProps) {
           <svg className="edge-layer">
             <defs>
               <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-                <polygon points="0 0, 8 3, 0 6" fill="#7f776d" />
+                <polygon points="0 0, 8 3, 0 6" fill="#c9c5bd" />
               </marker>
               <marker id="arrowhead-selected" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-                <polygon points="0 0, 8 3, 0 6" fill="#4a6cf7" />
+                <polygon points="0 0, 8 3, 0 6" fill="#2f6fed" />
               </marker>
             </defs>
             {edges.map((edge) =>
@@ -1306,8 +1382,8 @@ export function CanvasBoard(props: CanvasBoardProps) {
                     y1={edge.y1}
                     x2={edge.ax ?? edge.x2}
                     y2={edge.ay ?? edge.y2}
-                    stroke={selectedEdgeId === edge.id ? "#4a6cf7" : "#7f776d"}
-                    strokeWidth={edge.id === "preview-edge" ? "3" : selectedEdgeId === edge.id ? "3" : "2"}
+                    stroke={selectedEdgeId === edge.id ? "#2f6fed" : "#c9c5bd"}
+                    strokeWidth={edge.id === "preview-edge" ? "2.5" : selectedEdgeId === edge.id ? "2.5" : "1.5"}
                     strokeDasharray={edge.id === "preview-edge" ? "6 4" : edge.lineStyle === "dashed" ? "6 4" : undefined}
                     pointerEvents="none"
                   />
@@ -1318,8 +1394,8 @@ export function CanvasBoard(props: CanvasBoardProps) {
                       y1={edge.arrowFromY}
                       x2={edge.ax}
                       y2={edge.ay}
-                      stroke={selectedEdgeId === edge.id ? "#4a6cf7" : "#7f776d"}
-                      strokeWidth={selectedEdgeId === edge.id ? "3" : "2"}
+                      stroke={selectedEdgeId === edge.id ? "#2f6fed" : "#c9c5bd"}
+                      strokeWidth={selectedEdgeId === edge.id ? "2.5" : "1.5"}
                       markerEnd={selectedEdgeId === edge.id ? "url(#arrowhead-selected)" : "url(#arrowhead)"}
                       pointerEvents="none"
                     />
@@ -1331,8 +1407,8 @@ export function CanvasBoard(props: CanvasBoardProps) {
                       y1={edge.arrowFromSrcY}
                       x2={edge.fromAx}
                       y2={edge.fromAy}
-                      stroke={selectedEdgeId === edge.id ? "#4a6cf7" : "#7f776d"}
-                      strokeWidth={selectedEdgeId === edge.id ? "3" : "2"}
+                      stroke={selectedEdgeId === edge.id ? "#2f6fed" : "#c9c5bd"}
+                      strokeWidth={selectedEdgeId === edge.id ? "2.5" : "1.5"}
                       markerEnd={selectedEdgeId === edge.id ? "url(#arrowhead-selected)" : "url(#arrowhead)"}
                       pointerEvents="none"
                     />
@@ -1345,18 +1421,18 @@ export function CanvasBoard(props: CanvasBoardProps) {
                         y={edge.midY - 12}
                         width={100}
                         height={24}
-                        rx={4}
-                        fill="rgba(255,255,255,0.92)"
-                        stroke={selectedEdgeId === edge.id ? "#4a6cf7" : "#ccc"}
+                        rx={6}
+                        fill="rgba(255,255,255,0.94)"
+                        stroke={selectedEdgeId === edge.id ? "#2f6fed" : "#e8e6e1"}
                         strokeWidth={0.5}
                       />
                       <text
                         x={edge.midX}
                         y={edge.midY + 5}
                         textAnchor="middle"
-                        fill="#555"
-                        fontSize={13}
-                        fontFamily="sans-serif"
+                        fill="#6b6760"
+                        fontSize={12}
+                        fontFamily="Inter, system-ui, sans-serif"
                       >
                         {edge.label}
                       </text>
@@ -1529,15 +1605,16 @@ export function CanvasBoard(props: CanvasBoardProps) {
       })() : null}
       <div className="canvas-actions">
         <button type="button" className="canvas-action-btn" title="Fit all content" onClick={fitToView}>
-          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <path d="M2 10v4h4M14 6V2h-4M2 6V2h4M14 10v4h-4" />
-          </svg>
+          Fit
         </button>
-        <button type="button" className="canvas-action-btn" title="Focus selected" onClick={focusSelected} disabled={props.selectedCardIds.length === 0}>
-          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <circle cx="8" cy="8" r="3" />
-            <circle cx="8" cy="8" r="7" />
-          </svg>
+        <button
+          type="button"
+          className="canvas-action-btn"
+          title="Focus selected"
+          onClick={focusSelected}
+          disabled={props.selectedCardIds.length === 0}
+        >
+          Focus
         </button>
       </div>
     </div>
@@ -1595,10 +1672,14 @@ function CardRenderer(props: CardRendererProps) {
       data-card-type={card.type}
       {...(card.type === "board" ? { "data-child-board-id": card.childBoardId } : {})}
       style={{
+        // Only left/top — never nest card transform under .canvas-inner viewport
+        // transform (Safari permanently ghosts borders with nested transforms).
         left: props.displayPosition.x,
         top: props.displayPosition.y,
         ...(isBoardCard ? {} : { width: props.displaySize.width, height: props.displaySize.height }),
-        ...(card.cardColor && card.type !== "image" && card.type !== "link" && card.type !== "board" ? { backgroundColor: card.cardColor } : {}),
+        ...(card.cardColor && card.type !== "image" && card.type !== "link" && card.type !== "board"
+          ? { backgroundColor: card.cardColor }
+          : {}),
       }}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
@@ -1653,7 +1734,7 @@ function CardRenderer(props: CardRendererProps) {
           props.onSelectCard(card.id, event.shiftKey);
         }
       }}
-      onMouseUp={(event) => {
+      onMouseUp={() => {
         if (props.connectFromCardId && props.connectFromCardId !== card.id) {
           props.onFinishConnection(card.id);
         }
@@ -1671,7 +1752,12 @@ function CardRenderer(props: CardRendererProps) {
         }
       }}
     >
-      {isHovered && !isEditing && card.type !== "image" && card.type !== "link" ? (
+      {/* Real DOM ring (not outline/box-shadow). Hidden while dragging for Safari. */}
+      {isSelected && !props.isDragging && !isBoardCard ? (
+        <div className="card-selection-ring" aria-hidden="true" />
+      ) : null}
+
+      {isHovered && !isEditing && !props.isDragging && card.type !== "image" && card.type !== "link" ? (
         <div className="color-bar">
           {(isBoardCard ? BOARD_COLORS : CARD_COLORS).map((colorDef) => (
             <button
@@ -1699,20 +1785,26 @@ function CardRenderer(props: CardRendererProps) {
         />
       ) : null}
       <div className="canvas-card-content">
-      {renderEditableContent({
-        card,
-        markdown,
-        assetUrl: props.assetUrls[card.id],
-        allCards: boardBundle.board.cards,
-        isEditable: (card.type === "board" || card.type === "note" || card.type === "link" || card.type === "todo") ? isEditing : (isSelected || isEditing),
-        onUpdateCard: (updater) => props.onUpdateCard(card.id, updater),
-        onUpdateMarkdown: (nextMarkdown) => props.onUpdateMarkdown(card.id, nextMarkdown),
-        onUpdateBoardCardTitle: (title) => props.onUpdateBoardCardTitle(props.boardBundle.board.id, card.id, title),
-        onTextareaRef: (ref) => { noteTextareaRef.current = ref; },
-      })}
+        {renderEditableContent({
+          card,
+          markdown,
+          assetUrl: props.assetUrls[card.id],
+          allCards: boardBundle.board.cards,
+          isEditable:
+            card.type === "board" || card.type === "note" || card.type === "link" || card.type === "todo"
+              ? isEditing
+              : isSelected || isEditing,
+          onUpdateCard: (updater) => props.onUpdateCard(card.id, updater),
+          onUpdateMarkdown: (nextMarkdown) => props.onUpdateMarkdown(card.id, nextMarkdown),
+          onUpdateBoardCardTitle: (title) =>
+            props.onUpdateBoardCardTitle(props.boardBundle.board.id, card.id, title),
+          onTextareaRef: (ref) => {
+            noteTextareaRef.current = ref;
+          },
+        })}
       </div>
 
-      {!isBoardCard && isSelected ? (
+      {!isBoardCard && isSelected && !props.isDragging ? (
         <div
           className="connect-handle"
           onMouseDown={(event) => {
@@ -1725,7 +1817,7 @@ function CardRenderer(props: CardRendererProps) {
         />
       ) : null}
 
-      {!isBoardCard && isHovered && !isSelected ? (
+      {!isBoardCard && isHovered && !isSelected && !props.isDragging ? (
         <div
           className="hover-resize-indicator"
           onMouseDown={(event) => {
@@ -1735,7 +1827,7 @@ function CardRenderer(props: CardRendererProps) {
         />
       ) : null}
 
-      {!isBoardCard && isSelected ? (
+      {!isBoardCard && isSelected && !props.isDragging ? (
         <div
           className="resize-handle"
           onMouseDown={(event) => {

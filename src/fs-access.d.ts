@@ -30,3 +30,11 @@ interface Window {
     }>;
   }): Promise<FileSystemFileHandle[]>;
 }
+
+interface Navigator {
+  storage: StorageManager;
+}
+
+interface StorageManager {
+  getDirectory(): Promise<FileSystemDirectoryHandle>;
+}

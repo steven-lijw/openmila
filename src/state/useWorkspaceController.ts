@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isUserCancelError } from "../core/browserSupport";
 import { getFileExtension } from "../core/filePreview";
 import { addCardToBoard, createCardCreationResult, getBoard, getCard, moveCardToRoot, moveCardsToFront, patchCard, removeEdge, removeCardFromBoard, replaceBoardBundle, setBoardTitle, setCardDocument, updateEdgeList } from "../core/boardOperations";
 import { createId, createSlug } from "../core/ids";
+import { pickSingleFile } from "../core/pickFile";
 import { BrowserFsVault } from "../storage/fsVault";
 import type { AppState, BoardBundle, CardMeta, CardType, DragCardPayload, Edge, Point, WorkspaceFile } from "../types";
 
@@ -383,9 +385,17 @@ export function useWorkspaceController() {
     stateRef.current = state;
   }, [state]);
 
-  const openVault = useCallback(async (mode: "picker" | "recent") => {
+  const openVault = useCallback(async (mode: "picker" | "opfs" | "recent") => {
     try {
-      const vault = mode === "picker" ? await BrowserFsVault.openVaultPicker() : await BrowserFsVault.reopenRecentVault();
+      let vault: BrowserFsVault | null = null;
+      if (mode === "picker") {
+        vault = await BrowserFsVault.openVaultPicker();
+      } else if (mode === "opfs") {
+        vault = await BrowserFsVault.openOpfsVault();
+      } else {
+        vault = await BrowserFsVault.reopenRecentVault();
+      }
+
       if (!vault) {
         setState((current) => ({
           ...current,
@@ -422,6 +432,11 @@ export function useWorkspaceController() {
         error: null,
       });
     } catch (error) {
+      // User closed the system folder picker — not an app error.
+      if ((mode === "picker" || mode === "opfs") && isUserCancelError(error)) {
+        setState((current) => ({ ...current, isReady: true }));
+        return;
+      }
       setError(error);
       setState((current) => ({ ...current, isReady: true }));
     }
@@ -669,50 +684,21 @@ export function useWorkspaceController() {
     }
 
     if (type === "image" || type === "file") {
-      try {
-        const [fileHandle] = await window.showOpenFilePicker({
-          excludeAcceptAllOption: false,
-          multiple: false,
-          types: [
-            ...(type === "image"
-              ? [
-                  {
-                    description: "Images",
-                    accept: {
-                      "image/*": [".png", ".jpg", ".jpeg", ".gif", ".webp"],
-                    },
-                  },
-                ]
-              : [
-                  {
-                    description: "Documents and files",
-                    accept: {
-                      "application/pdf": [".pdf"],
-                      "application/msword": [".doc"],
-                      "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
-                      "application/vnd.ms-powerpoint": [".ppt"],
-                      "application/vnd.openxmlformats-officedocument.presentationml.presentation": [".pptx"],
-                      "application/vnd.ms-excel": [".xls"],
-                      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
-                      "application/rtf": [".rtf"],
-                      "video/*": [".mp4", ".webm"],
-                      "audio/*": [".mp3", ".wav", ".ogg"],
-                      "text/plain": [".txt", ".md", ".csv", ".json", ".html"],
-                    },
-                  },
-                ]),
-          ],
-        });
-        const file = await fileHandle.getFile();
-        await createAssetCardFromFile({
-          boardId: target.boardId,
-          file,
-          position,
-          type,
-        });
-      } catch {
+      const accept =
+        type === "image"
+          ? "image/*,.png,.jpg,.jpeg,.gif,.webp"
+          : ".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.rtf,.mp4,.webm,.mp3,.wav,.ogg,.txt,.md,.csv,.json,.html,application/pdf,text/plain";
+      const file = await pickSingleFile({ accept });
+      if (!file) {
         // User cancelled file selection.
+        return;
       }
+      await createAssetCardFromFile({
+        boardId: target.boardId,
+        file,
+        position,
+        type,
+      });
       return;
     }
 
@@ -1338,7 +1324,12 @@ export function useWorkspaceController() {
     if (!bundle) {
       return;
     }
+    const prev = bundle.board.viewport;
+    if (prev.x === position.x && prev.y === position.y && prev.zoom === position.zoom) {
+      return;
+    }
     // Pan/zoom is continuous navigation — never push undo frames.
+    // CanvasBoard debounces calls so the topbar is not re-rendered every wheel tick.
     updateBoardBundle(
       boardId,
       replaceBoardBundle(bundle, {

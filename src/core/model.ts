@@ -26,7 +26,7 @@ export const CARD_COLORS = [
 ] as const;
 
 export const BOARD_COLORS = [
-  { key: "default", label: "Default", bg: "#5B8DEF" },
+  { key: "default", label: "Default", bg: "#2F6FED" },
   { key: "red", label: "Red", bg: "#E53935" },
   { key: "orange", label: "Orange", bg: "#F4511E" },
   { key: "yellow", label: "Yellow", bg: "#FDD835" },

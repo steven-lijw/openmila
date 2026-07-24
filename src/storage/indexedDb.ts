@@ -8,6 +8,11 @@ const RECENT_VAULT_KEY = "recent-vault-handle";
 // keep a single shared handle per page.
 let dbPromise: Promise<IDBDatabase> | null = null;
 
+/** Shared app-state IndexedDB (vault handle, backend kind, etc.). */
+export function openDatabaseForAppState(): Promise<IDBDatabase> {
+  return openDatabase();
+}
+
 function openDatabase(): Promise<IDBDatabase> {
   if (dbPromise) {
     return dbPromise;

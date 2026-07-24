@@ -1,16 +1,26 @@
 import { useMemo } from "react";
 import { Toolbar } from "./components/Toolbar";
 import { CanvasBoard } from "./components/CanvasBoard";
+import { getBrowserSupport } from "./core/browserSupport";
 import { useWorkspaceController } from "./state/useWorkspaceController";
 import type { BoardBundle } from "./types";
 
 export default function App() {
   const controller = useWorkspaceController();
+  const support = useMemo(() => getBrowserSupport(), []);
   const saveStatus = controller.state.isSaving
     ? "Saving..."
     : controller.state.hasUnsavedChanges
       ? "Unsaved"
       : "Saved";
+
+  const openPrimaryVault = () => {
+    if (support.preferredBackend === "folder") {
+      void controller.openVault("picker");
+    } else if (support.preferredBackend === "opfs") {
+      void controller.openVault("opfs");
+    }
+  };
   const boardPath = useMemo(() => {
     if (!controller.currentBoard) {
       return [] as { id: string; title: string }[];
@@ -86,12 +96,24 @@ export default function App() {
                 Back
               </button>
             ) : null}
-            <button type="button" className="nav-button" onClick={() => void controller.openVault("picker")}>
+            <button
+              type="button"
+              className="nav-button"
+              onClick={openPrimaryVault}
+              disabled={!support.canOpenVault}
+              title={
+                support.folderPicker
+                  ? "Open a local vault folder"
+                  : support.opfs
+                    ? "Open the browser-local vault (Safari-compatible)"
+                    : (support.message ?? "Vault storage unavailable")
+              }
+            >
               Open vault
             </button>
             <span className="nav-divider" />
             <span className="status-pill">{controller.state.vaultName ?? "No vault"}</span>
-            <span className="status-pill">{saveStatus}</span>
+            <span className="status-pill status-pill-save">{saveStatus}</span>
           </div>
         </header>
 
@@ -104,19 +126,53 @@ export default function App() {
           <div className="empty-state">
             <section className="empty-state-copy" aria-labelledby="empty-state-title">
               <span className="empty-state-kicker">Local vault</span>
-              <h1 id="empty-state-title">Open a workspace folder</h1>
+              <h1 id="empty-state-title">
+                {support.folderPicker ? "Open a workspace folder" : "Open your workspace"}
+              </h1>
               <p>
-                Pick a local folder to load your boards, notes, files, and nested canvases.
+                {support.folderPicker
+                  ? "Pick a local folder to load your boards, notes, files, and nested canvases."
+                  : support.opfs
+                    ? "Safari stores your vault privately in this browser (Origin Private File System). Everything stays on your device — no cloud account."
+                    : "This browser cannot open a vault yet. Use Chrome, Edge, or a recent Safari."}
               </p>
               <div className="empty-state-actions">
-                <button
-                  type="button"
-                  className="empty-state-primary"
-                  onClick={() => void controller.openVault("picker")}
-                >
-                  Choose vault folder
-                </button>
+                {support.folderPicker ? (
+                  <button
+                    type="button"
+                    className="empty-state-primary"
+                    onClick={() => void controller.openVault("picker")}
+                    title="Pick a local folder on disk"
+                  >
+                    Choose vault folder
+                  </button>
+                ) : null}
+                {support.opfs ? (
+                  <button
+                    type="button"
+                    className={support.folderPicker ? "empty-state-secondary" : "empty-state-primary"}
+                    onClick={() => void controller.openVault("opfs")}
+                    title="Store the vault inside this browser (works in Safari)"
+                  >
+                    {support.folderPicker ? "Use browser vault" : "Open browser vault"}
+                  </button>
+                ) : null}
               </div>
+              {support.canOpenVault ? (
+                <p className="empty-state-hint">
+                  {support.folderPicker && support.opfs
+                    ? "Chrome/Edge: disk folder · Safari: browser vault · data stays on this device"
+                    : support.folderPicker
+                      ? "Chrome or Edge · open via localhost · data stays in your folder"
+                      : "Safari-compatible browser vault · data stays on this device"}
+                </p>
+              ) : null}
+              {!support.canOpenVault && support.message ? (
+                <div className="empty-state-error empty-state-warning" role="status">
+                  <strong>Browser requirement</strong>
+                  <p>{support.message}</p>
+                </div>
+              ) : null}
               {controller.state.error ? (
                 <div className="empty-state-error" role="status">
                   {controller.state.error}

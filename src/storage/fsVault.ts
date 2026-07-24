@@ -1,10 +1,55 @@
+import { assertFolderPickerSupported, assertOpfsSupported } from "../core/browserSupport";
 import { createWorkspace } from "../core/model";
 import { sanitizeAssetFileName, splitSafePath } from "../core/pathUtils";
 import { loadRecentVaultHandle, saveRecentVaultHandle } from "./indexedDb";
+import {
+  loadOpfsVaultDisplayName,
+  loadRecentVaultBackend,
+  saveOpfsVaultDisplayName,
+  saveRecentVaultBackend,
+} from "./vaultSession";
 import type { BoardBundle, BoardFile, WorkspaceFile } from "../types";
 
 const TRASH_DIRECTORY = ".trash";
 const TRASH_LIMIT = 10;
+/** Subdirectory under OPFS root so we never pollute the storage root. */
+const OPFS_VAULT_DIR = "openmila-vault";
+
+export type VaultKind = "folder" | "opfs";
+
+/**
+ * Iterate directory children in a way that works on Chromium and Safari OPFS.
+ * Safari may lack `entries()` and only expose async iteration via `values()`.
+ */
+async function* iterateDirectory(
+  dir: FileSystemDirectoryHandle,
+): AsyncGenerator<[string, FileSystemHandle]> {
+  const anyDir = dir as FileSystemDirectoryHandle & {
+    entries?: () => AsyncIterableIterator<[string, FileSystemHandle]>;
+    values?: () => AsyncIterableIterator<FileSystemHandle>;
+  };
+
+  if (typeof anyDir.entries === "function") {
+    for await (const entry of anyDir.entries()) {
+      yield entry;
+    }
+    return;
+  }
+
+  if (typeof anyDir.values === "function") {
+    for await (const handle of anyDir.values()) {
+      yield [handle.name, handle];
+    }
+    return;
+  }
+
+  // Last resort: some environments only support Symbol.asyncIterator yielding handles.
+  if (typeof anyDir[Symbol.asyncIterator] === "function") {
+    for await (const handle of anyDir as unknown as AsyncIterable<FileSystemHandle>) {
+      yield [handle.name, handle];
+    }
+  }
+}
 
 async function ensureDirectory(
   parent: FileSystemDirectoryHandle,
@@ -121,7 +166,7 @@ async function copyDirectoryContents(
   sourceDir: FileSystemDirectoryHandle,
   destinationDir: FileSystemDirectoryHandle,
 ): Promise<void> {
-  for await (const [name, handle] of sourceDir.entries()) {
+  for await (const [name, handle] of iterateDirectory(sourceDir)) {
     if (handle.kind === "file") {
       await copyFileHandle(handle as FileSystemFileHandle, destinationDir, name);
     } else if (handle.kind === "directory") {
@@ -154,43 +199,113 @@ type TrashEntry = {
 };
 
 async function verifyPermission(handle: FileSystemDirectoryHandle): Promise<boolean> {
+  // OPFS and some polyfills have no permission methods — treat as granted.
+  if (typeof handle.queryPermission !== "function" && typeof handle.requestPermission !== "function") {
+    return true;
+  }
   const permission = await handle.queryPermission?.({ mode: "readwrite" });
   if (permission === "granted") {
     return true;
   }
+  // `prompt` / undefined → try request
+  if (permission === "denied") {
+    return false;
+  }
   const requested = await handle.requestPermission?.({ mode: "readwrite" });
+  // If requestPermission is missing after query was undefined, allow.
+  if (requested === undefined && typeof handle.requestPermission !== "function") {
+    return true;
+  }
   return requested === "granted";
 }
 
 export class BrowserFsVault {
   private writeQueues = new Map<string, Promise<void>>();
 
-  constructor(private readonly rootHandle: FileSystemDirectoryHandle) {}
+  private displayName: string | undefined;
 
+  constructor(
+    private readonly rootHandle: FileSystemDirectoryHandle,
+    private readonly options: { kind: VaultKind; displayName?: string } = { kind: "folder" },
+  ) {
+    this.displayName = options.displayName;
+  }
+
+  get kind(): VaultKind {
+    return this.options.kind;
+  }
+
+  /** Open a user-chosen folder (Chrome / Edge File System Access API). */
   static async openVaultPicker(): Promise<BrowserFsVault> {
+    assertFolderPickerSupported();
     const handle = await window.showDirectoryPicker({ mode: "readwrite" });
     const hasPermission = await verifyPermission(handle);
     if (!hasPermission) {
       throw new Error("Vault permission was not granted.");
     }
     await saveRecentVaultHandle(handle);
-    return new BrowserFsVault(handle);
+    await saveRecentVaultBackend("folder");
+    return new BrowserFsVault(handle, { kind: "folder" });
+  }
+
+  /**
+   * Open (or create) a vault inside the Origin Private File System.
+   * Works in Safari 15.2+ and other browsers without showDirectoryPicker.
+   * Data stays local to the origin — not a user-visible Finder folder.
+   */
+  static async openOpfsVault(): Promise<BrowserFsVault> {
+    assertOpfsSupported();
+    const root = await navigator.storage.getDirectory();
+    const vaultRoot = await root.getDirectoryHandle(OPFS_VAULT_DIR, { create: true });
+    const displayName = await loadOpfsVaultDisplayName();
+    await saveRecentVaultBackend("opfs");
+    // Do not overwrite a real folder handle with nothing — just mark backend.
+    return new BrowserFsVault(vaultRoot, { kind: "opfs", displayName });
   }
 
   static async reopenRecentVault(): Promise<BrowserFsVault | null> {
-    const handle = await loadRecentVaultHandle();
-    if (!handle) {
-      return null;
+    const backend = await loadRecentVaultBackend();
+
+    // Prefer the last-used backend when known.
+    if (backend === "opfs") {
+      try {
+        return await BrowserFsVault.openOpfsVault();
+      } catch {
+        return null;
+      }
     }
-    const hasPermission = await verifyPermission(handle);
-    if (!hasPermission) {
-      return null;
+
+    // Folder backend, or legacy sessions with only a stored handle.
+    try {
+      const handle = await loadRecentVaultHandle();
+      if (handle) {
+        const hasPermission = await verifyPermission(handle);
+        if (hasPermission) {
+          await saveRecentVaultBackend("folder");
+          return new BrowserFsVault(handle, { kind: "folder" });
+        }
+      }
+    } catch {
+      // IndexedDB may not restore handles (e.g. Safari) — ignore.
     }
-    return new BrowserFsVault(handle);
+
+    return null;
   }
 
   get vaultName(): string {
-    return this.rootHandle.name;
+    if (this.options.kind === "opfs") {
+      return this.displayName ?? "Browser vault";
+    }
+    return this.rootHandle.name || "Vault";
+  }
+
+  /** Optional: rename the OPFS vault label shown in the UI. */
+  async setDisplayName(name: string): Promise<void> {
+    if (this.options.kind !== "opfs") {
+      return;
+    }
+    this.displayName = name.trim() || "Browser vault";
+    await saveOpfsVaultDisplayName(this.displayName);
   }
 
   async initialize(): Promise<{ workspace: WorkspaceFile; boards: Record<string, BoardBundle> }> {
@@ -250,7 +365,7 @@ export class BrowserFsVault {
       return;
     }
 
-    for await (const [name, handle] of directory.entries()) {
+    for await (const [name, handle] of iterateDirectory(directory)) {
       if (handle.kind !== "directory") {
         continue;
       }
@@ -478,7 +593,7 @@ export class BrowserFsVault {
   private async pruneTrash(limit: number): Promise<void> {
     const trashRoot = await ensureDirectory(this.rootHandle, TRASH_DIRECTORY);
     const entries: string[] = [];
-    for await (const [name, handle] of trashRoot.entries()) {
+    for await (const [name, handle] of iterateDirectory(trashRoot)) {
       if (handle.kind === "directory") {
         entries.push(name);
       }

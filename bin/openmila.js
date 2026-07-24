@@ -54,7 +54,9 @@ const CSP = [
   "media-src 'self' blob:",
   "font-src 'self' data:",
   // Inline styles are used by React (styled objects) and styles.css; scripts must be self only.
-  "style-src 'self' 'unsafe-inline'",
+  // Google Fonts for Inter (UI redesign).
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' data: https://fonts.gstatic.com",
   "script-src 'self'",
   // YouTube oEmbed for link-card previews; meta API stays same-origin.
   "connect-src 'self' https://www.youtube.com",
