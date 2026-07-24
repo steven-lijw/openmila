@@ -3,6 +3,9 @@ node_modules
 dist
 *.tsbuildinfo
 
+# Local design exports / Figma previews
+.design-preview/
+
 # Local tooling configuration
 .claude/
 .codegraph/

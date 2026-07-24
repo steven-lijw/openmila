@@ -408,13 +408,23 @@ button {
   overflow: visible;
 }
 
-.selection-box {
+/* Screen-space marquee overlay (sibling of .canvas-inner — not under its transform).
+   SVG rect redraws cleanly in Safari; DOM border+resize under transform leaves H/V ghosts. */
+.selection-overlay {
   position: absolute;
-  border: 1px solid var(--color-primary);
-  background: var(--color-primary-soft);
-  border-radius: 4px;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
   z-index: 50;
+  overflow: hidden;
+}
+
+.selection-overlay-rect {
+  fill: var(--color-primary-soft);
+  stroke: var(--color-primary);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
 }
 
 .canvas-card {

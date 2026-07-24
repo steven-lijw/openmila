@@ -1443,18 +1443,6 @@ export function CanvasBoard(props: CanvasBoardProps) {
             )}
           </svg>
 
-          {selectionBox ? (
-            <div
-              className="selection-box"
-              style={{
-                left: Math.min(selectionBox.start.x, selectionBox.current.x),
-                top: Math.min(selectionBox.start.y, selectionBox.current.y),
-                width: Math.abs(selectionBox.current.x - selectionBox.start.x),
-                height: Math.abs(selectionBox.current.y - selectionBox.start.y),
-              }}
-            />
-          ) : null}
-
           {rootCards.map((card) => {
             const displayPosition =
               draggingCard?.positions[card.id] ?? committedPositions[card.id] ?? card.position;
@@ -1534,6 +1522,30 @@ export function CanvasBoard(props: CanvasBoardProps) {
             );
           })}
         </div>
+
+        {/*
+          Marquee in screen space OUTSIDE .canvas-inner (viewport transform).
+          Safari ghosts DOM borders under transforms; SVG rect repaints cleanly.
+        */}
+        {selectionBox ? (
+          <svg className="selection-overlay" aria-hidden="true">
+            <rect
+              className="selection-overlay-rect"
+              x={
+                viewport.x +
+                Math.min(selectionBox.start.x, selectionBox.current.x) * viewport.zoom
+              }
+              y={
+                viewport.y +
+                Math.min(selectionBox.start.y, selectionBox.current.y) * viewport.zoom
+              }
+              width={Math.abs(selectionBox.current.x - selectionBox.start.x) * viewport.zoom}
+              height={Math.abs(selectionBox.current.y - selectionBox.start.y) * viewport.zoom}
+              rx={4}
+              ry={4}
+            />
+          </svg>
+        ) : null}
       </div>
       {/* Edge style popup menu */}
       {edgeMenuPos && selectedEdgeId ? (() => {
